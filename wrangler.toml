@@ -1,79 +1,91 @@
 # ══════════════════════════════════════════════════════════════════════════════
-#  NOVATRIX DIGITAL — Cloudflare configuration
+#  NOVATRIX DIGITAL — Cloudflare Workers (static assets)
 #  Production: https://finance.novatrixdigital.in
 # ══════════════════════════════════════════════════════════════════════════════
 #
-#  Configured for WORKERS with static assets, because that is what the
-#  connected build actually runs:
-#
+#  The connected build runs:
 #      Executing user build command:  npm run build
 #      Executing user deploy command: npx wrangler deploy
 #
-#  The previous config used `pages_build_output_dir`, which only Pages
-#  understands — so `wrangler deploy` failed with
-#  "Missing entry-point to Worker script or to assets directory".
-#
-#  There is deliberately no `main` here. With none set, Cloudflare serves the
-#  assets straight from its edge and `not_found_handling` does the SPA routing,
-#  so no custom code sits in the request path. Headers come from dist/_headers,
-#  which scripts/gen-headers.mjs writes during the build.
-#
-#  ── If this project is actually on PAGES ────────────────────────────────────
-#  Either set the deploy command to
-#      npx wrangler pages deploy dist --project-name novatrix-digital
-#  or run `npm run deploy` locally. Both work without this file.
-#
-#  ── Custom domain ───────────────────────────────────────────────────────────
-#  Add finance.novatrixdigital.in under the project's Settings → Domains.
-#  If novatrixdigital.in is on Cloudflare DNS the record is created for you;
-#  otherwise add  CNAME finance → <project>.workers.dev
+#  `wrangler deploy` OVERWRITES the Worker's remote configuration with whatever
+#  is in this file. Anything configured in the dashboard but missing here gets
+#  removed — which is why the custom domain route is declared below rather than
+#  left implicit.
 # ══════════════════════════════════════════════════════════════════════════════
 
-name = "novatrix-digital"
-compatibility_date = "2024-11-01"
+# Must match the Worker the CI deploys to, or wrangler warns and overrides it.
+name = "finance"
+
+# Kept in step with the remote Worker to avoid config drift on every deploy.
+compatibility_date = "2026-09-08"
 compatibility_flags = ["nodejs_compat"]
+
+# ── Custom domain ─────────────────────────────────────────────────────────────
+#
+#  Declared here because a deploy replaces the remote route list. Without it,
+#  each deploy would silently detach finance.novatrixdigital.in from the Worker.
+routes = [
+  { pattern = "finance.novatrixdigital.in", zone_name = "novatrixdigital.in", custom_domain = true }
+]
 
 # ── Static assets ─────────────────────────────────────────────────────────────
 [assets]
 directory = "./dist"
 
-# A deep link like /invoices is a real page to the user, so unmatched paths
-# return index.html with a 200 and React Router takes over. Without this, a hard
-# refresh on any route other than / would 404.
+# Unmatched paths return index.html with a 200 so React Router can take over —
+# a hard refresh on /invoices must not 404.
+#
+# Note: do NOT also ship a `_redirects` file containing `/* /index.html 200`.
+# Workers rejects it as a self-triggering rule:
+#   "Line 2: Infinite loop detected in this rule" [code: 100324]
 not_found_handling = "single-page-application"
 
-# ── Build-time variables ──────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+#  ENVIRONMENT VARIABLES — deliberately NOT set here
+# ══════════════════════════════════════════════════════════════════════════════
 #
-#  Vite inlines VITE_* at BUILD time, so these must also exist in the dashboard
-#  under Settings → Variables, for both production and preview:
+#  There is no [vars] block, for two reasons:
 #
-#      VITE_SUPABASE_URL       https://<project-ref>.supabase.co
-#      VITE_SUPABASE_ANON_KEY  <anon / publishable key>
+#  1. [vars] creates RUNTIME bindings for Worker code. This project ships no
+#     Worker code (no `main`), so nothing would ever read them.
 #
-#  NEVER add any of these here or in the dashboard — a build environment feeds
-#  the client bundle:
-#      SUPABASE_SERVICE_ROLE_KEY  bypasses Row Level Security entirely
-#      RESEND_API_KEY             can send mail as your verified domain
-#      REMINDER_SECRET            authorises the reminder function
+#  2. Vite inlines VITE_* at BUILD time. A runtime binding is far too late —
+#     the value has to exist while `vite build` runs.
 #
-#  Those three belong to the Supabase Edge Function. Upload them with
-#  `npm run secrets:push`, or set them in the Supabase dashboard under
-#  Project Settings → Edge Functions → Secrets.
+#  3. Declaring them here also overwrites values already set in the dashboard.
+#     The last deploy warned:
+#       "Environment variables VITE_APP_URL and VITE_DEFAULT_CURRENCY conflict
+#        with existing remote secrets. This deployment will replace them."
+#
+#  So set them as BUILD variables instead:
+#     Workers & Pages → finance → Settings → Build → Variables and secrets
+#
+#     VITE_SUPABASE_URL        https://<project-ref>.supabase.co
+#     VITE_SUPABASE_ANON_KEY   <anon / publishable key>
+#     VITE_APP_URL             https://finance.novatrixdigital.in
+#     VITE_APP_NAME            Novatrix Digital
+#     VITE_DEFAULT_CURRENCY    INR
+#
+#  scripts/gen-headers.mjs prints a warning in the build log if
+#  VITE_SUPABASE_URL is missing — which it did on the last run, meaning the
+#  deployed app currently cannot reach Supabase.
+#
+#  NEVER add these anywhere in the build environment — it feeds the bundle:
+#     SUPABASE_SERVICE_ROLE_KEY   bypasses Row Level Security entirely
+#     RESEND_API_KEY              can send mail as your verified domain
+#     REMINDER_SECRET             authorises the reminder function
+#  Those belong to the Supabase Edge Function: `npm run secrets:push`.
 
-[vars]
-VITE_APP_URL = "https://finance.novatrixdigital.in"
-VITE_APP_NAME = "Novatrix Digital"
-VITE_DEFAULT_CURRENCY = "INR"
-
-# ── Optional: run worker/index.js in front of the assets ──────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+#  Optional: run worker/index.js in front of the assets
+# ══════════════════════════════════════════════════════════════════════════════
 #
-#  worker/index.js adds a Supabase-scoped CSP, immutable caching for hashed
-#  assets and a /healthz endpoint. It is not wired up by default because the
-#  static path above needs no code at all. To enable it, uncomment:
+#  worker/index.js adds a Supabase-scoped CSP, immutable caching and /healthz.
+#  Not enabled: the static path above needs no code. To turn it on, uncomment
 #
 #      main = "worker/index.js"
 #
-#  and inside [assets] add:
+#  and inside [assets] add
 #
 #      binding = "ASSETS"
 #      not_found_handling = "none"   # the worker does the SPA fallback itself
