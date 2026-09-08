@@ -1,0 +1,56 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  NOVATRIX DIGITAL — Worker runtime bindings
+# ═══════════════════════════════════════════════════════════════════════════
+#
+#  Copy to `.dev.vars` for `npm run cf:dev`, which runs worker/index.js on
+#  Cloudflare's own runtime locally. These are the same names the Worker reads
+#  in production, where they are set under
+#      Settings → Variables and Secrets  (type: Secret)
+#
+#  `npm run dev` does NOT read this file — that is Vite, and it reads .env.
+#
+#  ── Two different layers, do not mix them up ──────────────────────────────
+#
+#    .env          VITE_*    → inlined into the browser bundle at BUILD time.
+#                              Public. Only the Supabase URL + anon key.
+#
+#    .dev.vars     no prefix → read by the Worker at RUNTIME, on Cloudflare's
+#                              servers. Never reaches the browser, which is
+#                              why the service-role and Resend keys belong
+#                              here and nowhere else.
+#
+#  `.dev.vars` is gitignored. This example file is not — keep it blank.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+# ─── Supabase (server side) ───────────────────────────────────────────────
+
+# Same project as VITE_SUPABASE_URL in .env, without the VITE_ prefix because
+# the Worker reads it at runtime rather than the bundler at build time.
+SUPABASE_URL=https://your-project-ref.supabase.co
+
+# Bypasses Row Level Security completely. The Worker needs it to read every
+# user's due reminders. It must NEVER appear in .env, in wrangler.toml, in a
+# build variable, or anywhere under src/ — all of those reach the browser.
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+
+
+# ─── Email (Resend) ───────────────────────────────────────────────────────
+
+# https://resend.com/api-keys — a sending-only key is enough.
+RESEND_API_KEY=re_your_resend_key
+
+# The domain must be verified in Resend or mail bounces / lands in spam.
+RESEND_FROM=Novatrix Digital <reminders@novatrixdigital.in>
+
+
+# ─── App ──────────────────────────────────────────────────────────────────
+
+# Where the "Open Novatrix" button in each email points.
+APP_URL=https://finance.novatrixdigital.in
+
+# Authorises POST /api/reminders/run. The cron trigger does not need it —
+# scheduled() runs inside the Worker — but a manual curl does.
+# Generate one with:
+#   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+REMINDER_SECRET=your-long-random-string

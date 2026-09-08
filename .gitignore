@@ -6,6 +6,11 @@ dist-ssr
 .env
 .env.local
 .env.*.local
+
+# Cloudflare Worker runtime secrets (service-role, Resend)
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
 .DS_Store
 .wrangler
 npm-debug.log*

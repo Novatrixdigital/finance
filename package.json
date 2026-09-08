@@ -16,7 +16,9 @@
     "functions:deploy": "supabase functions deploy send-reminders --no-verify-jwt",
     "check:sql": "node scripts/check-sql.cjs supabase/novatrix_complete.sql && node scripts/check-sql.cjs supabase/create_account.sql",
     "postbuild": "node scripts/gen-headers.mjs",
-    "deploy:pages": "npm run build && wrangler pages deploy dist --project-name novatrix-digital"
+    "deploy:pages": "npm run build && wrangler pages deploy dist --project-name novatrix-digital",
+    "cf:dev": "npm run build && wrangler dev",
+    "cf:tail": "wrangler tail"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.47.10",

@@ -20,6 +20,10 @@ name = "finance"
 compatibility_date = "2026-09-08"
 compatibility_flags = ["nodejs_compat"]
 
+# The Worker runs in front of the assets so runtime secrets have somewhere to
+# be read: /healthz, POST /api/reminders/run, the cron job, and SPA fallback.
+main = "worker/index.js"
+
 # ── Custom domain ─────────────────────────────────────────────────────────────
 #
 #  Declared here because a deploy replaces the remote route list. Without it,
@@ -32,60 +36,68 @@ routes = [
 [assets]
 directory = "./dist"
 
-# Unmatched paths return index.html with a 200 so React Router can take over —
-# a hard refresh on /invoices must not 404.
+# Exposes the bundle to worker/index.js as env.ASSETS.
+binding = "ASSETS"
+
+# "none" because the Worker does the SPA fallback itself — it needs to see
+# unmatched paths in order to route /api/* and /healthz.
 #
-# Note: do NOT also ship a `_redirects` file containing `/* /index.html 200`.
+# Note: do NOT ship a `_redirects` file containing `/* /index.html 200`.
 # Workers rejects it as a self-triggering rule:
 #   "Line 2: Infinite loop detected in this rule" [code: 100324]
-not_found_handling = "single-page-application"
+not_found_handling = "none"
+
+# ── Cron: send due reminders every morning ────────────────────────────────────
+# 01:00 UTC = 06:30 IST. Calls scheduled() in worker/index.js.
+[triggers]
+crons = ["0 1 * * *"]
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  ENVIRONMENT VARIABLES — deliberately NOT set here
+#  BUILD VARIABLES — set in the dashboard, not in this file
 # ══════════════════════════════════════════════════════════════════════════════
 #
-#  There is no [vars] block, for two reasons:
+#  There is deliberately no [vars] block. Build and runtime are separate
+#  layers, and VITE_* belongs to the build one:
 #
-#  1. [vars] creates RUNTIME bindings for Worker code. This project ships no
-#     Worker code (no `main`), so nothing would ever read them.
+#    BUILD   Vite inlines VITE_* into the bundle while `vite build` runs.
+#            A [vars] entry is a RUNTIME binding, which is far too late.
+#            Set these under Settings → Build → Variables and secrets:
 #
-#  2. Vite inlines VITE_* at BUILD time. A runtime binding is far too late —
-#     the value has to exist while `vite build` runs.
+#              VITE_SUPABASE_URL        https://<project-ref>.supabase.co
+#              VITE_SUPABASE_ANON_KEY   <anon / publishable key>
+#              VITE_APP_URL             https://finance.novatrixdigital.in
+#              VITE_APP_NAME            Novatrix Digital
+#              VITE_DEFAULT_CURRENCY    INR
 #
-#  3. Declaring them here also overwrites values already set in the dashboard.
-#     The last deploy warned:
-#       "Environment variables VITE_APP_URL and VITE_DEFAULT_CURRENCY conflict
-#        with existing remote secrets. This deployment will replace them."
+#    RUNTIME worker/index.js reads its secrets from the bindings listed at the
+#            bottom of this file. Those never reach the browser.
 #
-#  So set them as BUILD variables instead:
-#     Workers & Pages → finance → Settings → Build → Variables and secrets
-#
-#     VITE_SUPABASE_URL        https://<project-ref>.supabase.co
-#     VITE_SUPABASE_ANON_KEY   <anon / publishable key>
-#     VITE_APP_URL             https://finance.novatrixdigital.in
-#     VITE_APP_NAME            Novatrix Digital
-#     VITE_DEFAULT_CURRENCY    INR
+#  A [vars] block here would also clobber the dashboard. An earlier deploy
+#  warned: "VITE_APP_URL and VITE_DEFAULT_CURRENCY conflict with existing
+#  remote secrets ... will replace them."
 #
 #  scripts/gen-headers.mjs prints a warning in the build log if
-#  VITE_SUPABASE_URL is missing — which it did on the last run, meaning the
-#  deployed app currently cannot reach Supabase.
+#  VITE_SUPABASE_URL is missing, so a misconfigured build is visible.
 #
-#  NEVER add these anywhere in the build environment — it feeds the bundle:
-#     SUPABASE_SERVICE_ROLE_KEY   bypasses Row Level Security entirely
-#     RESEND_API_KEY              can send mail as your verified domain
-#     REMINDER_SECRET             authorises the reminder function
-#  Those belong to the Supabase Edge Function: `npm run secrets:push`.
+#  NEVER put these in the BUILD environment — a build feeds the bundle:
+#     SUPABASE_SERVICE_ROLE_KEY · RESEND_API_KEY · REMINDER_SECRET
+#  They belong to the runtime bindings below.
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  Optional: run worker/index.js in front of the assets
+#  RUNTIME SECRETS — set in the dashboard, never in this file
 # ══════════════════════════════════════════════════════════════════════════════
 #
-#  worker/index.js adds a Supabase-scoped CSP, immutable caching and /healthz.
-#  Not enabled: the static path above needs no code. To turn it on, uncomment
+#  Settings → Variables and Secrets → add as type "Secret":
 #
-#      main = "worker/index.js"
+#      SUPABASE_URL                https://<ref>.supabase.co
+#      SUPABASE_SERVICE_ROLE_KEY   bypasses RLS — server side only
+#      RESEND_API_KEY              re_…
+#      RESEND_FROM                 Novatrix Digital <reminders@novatrixdigital.in>
+#      APP_URL                     https://finance.novatrixdigital.in
+#      REMINDER_SECRET             long random string
 #
-#  and inside [assets] add
+#  These are safe here in a way they never are as BUILD variables: the Worker
+#  runs on Cloudflare's servers, so nothing it reads reaches the browser.
 #
-#      binding = "ASSETS"
-#      not_found_handling = "none"   # the worker does the SPA fallback itself
+#  Locally: copy .dev.vars.example to .dev.vars, then `npm run cf:dev`.
+#  Check what is bound at any time: GET /healthz reports presence, not values.
