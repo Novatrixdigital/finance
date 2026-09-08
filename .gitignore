@@ -1,0 +1,15 @@
+node_modules
+dist
+dist-ssr
+.vite
+*.local
+.env
+.env.local
+.env.*.local
+.DS_Store
+.wrangler
+npm-debug.log*
+yarn-error.log*
+.vscode/*
+!.vscode/extensions.json
+.idea

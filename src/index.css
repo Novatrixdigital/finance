@@ -1,0 +1,317 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ══════════════════════════════════════════════════════════════════════════
+   NOVATRIX DIGITAL — DESIGN TOKENS
+   Dark is the canonical theme. `.light` on <html> flips surfaces only;
+   the neon lime accent is intentionally identical in both themes.
+   ══════════════════════════════════════════════════════════════════════════ */
+@layer base {
+  :root,
+  html.dark {
+    --c-base: 9 11 13;        /* #090B0D */
+    --c-surface: 17 20 22;    /* #111416 */
+    --c-card: 21 25 28;       /* #15191C */
+    --c-elevated: 26 31 34;   /* #1A1F22 */
+    --c-raised: 32 38 42;     /* #20262A */
+
+    --c-ink: 245 245 245;     /* #F5F5F5 */
+    --c-ink-dim: 156 163 175; /* #9CA3AF */
+    --c-ink-muted: 125 132 142; /* #7D848E — #6B7280 was only 3.66:1 here */
+
+    --c-hair: rgba(255, 255, 255, 0.08);
+    --c-hair-strong: rgba(255, 255, 255, 0.14);
+    --c-hair-soft: rgba(255, 255, 255, 0.04);
+
+    /* The accent used for TEXT, BORDERS and low-alpha tints. On a dark ground
+       that is the full neon lime; see html.light for why it has to change. */
+    --c-accent: 200 255 0;         /* #C8FF00 */
+
+    /* Semantics. Bright on a dark ground; see html.light for the swap. */
+    --c-positive: 182 255 0;       /* #B6FF00 */
+    --c-negative: 255 92 108;      /* #FF5C6C */
+    --c-warning: 255 181 71;       /* #FFB547 */
+    --c-info: 125 211 252;         /* #7DD3FC */
+
+    /* Chart furniture — Recharts needs concrete values, not utility classes. */
+    --c-chart-grid: rgba(255, 255, 255, 0.06);
+    --c-chart-axis: #6b7280;
+    --c-chart-expense: #4b5563;
+    --c-shimmer: rgba(255, 255, 255, 0.06);
+
+    --c-lime: #c8ff00;
+    --c-scrim: rgba(0, 0, 0, 0.72);
+    color-scheme: dark;
+  }
+
+  html.light {
+    --c-base: 238 238 234;    /* page ground — deliberately darker than card */
+    --c-surface: 247 247 244;
+    --c-card: 255 255 255;
+    --c-elevated: 242 242 238;
+    --c-raised: 255 255 255;
+
+    --c-ink: 11 13 15;        /* #0B0D0F */
+    --c-ink-dim: 75 85 99;    /* #4B5563 */
+    --c-ink-muted: 99 106 114;     /* was #8B9199 — only 2.7:1 on white */
+
+    --c-hair: rgba(9, 11, 13, 0.13);
+    --c-hair-strong: rgba(9, 11, 13, 0.22);
+    --c-hair-soft: rgba(9, 11, 13, 0.07);
+
+    /* #C8FF00 on white is ~1.1:1 — invisible. This olive keeps the brand hue
+       at ~7:1, so lime-coloured TEXT stays legible. Solid lime fills (buttons,
+       chart bars) still use the bright value: black on #C8FF00 reads fine. */
+    --c-accent: 74 102 0;          /* #4A6600 */
+
+    /* The dark-mode semantics all fail on white at body sizes:
+       #FFB547 is 1.8:1, #FF5C6C is 3.2:1, #7DD3FC is 1.9:1.
+       These darker equivalents keep the hue and clear 4.5:1. */
+    --c-positive: 90 122 0;        /* #5A7A00 */
+    --c-negative: 198 40 56;       /* #C62838 */
+    --c-warning: 154 88 0;         /* #9A5800 */
+    --c-info: 3 105 161;           /* #0369A1 */
+
+    --c-chart-grid: rgba(9, 11, 13, 0.08);
+    --c-chart-axis: #6b7280;
+    --c-chart-expense: #9ca3af;
+    --c-shimmer: rgba(9, 11, 13, 0.05);
+
+    --c-scrim: rgba(20, 22, 24, 0.45);
+    color-scheme: light;
+  }
+
+  * {
+    @apply border-hair;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-base text-ink font-sans antialiased;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overscroll-behavior-y: none;
+  }
+
+  /* Tabular numerals everywhere money appears — columns must align. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  ::selection {
+    background: rgb(var(--c-accent) / 0.24);
+    color: rgb(var(--c-ink));
+  }
+
+  /* Slim, unobtrusive scrollbars */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--c-hair-strong);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgb(var(--c-accent) / 0.45);
+    background-clip: content-box;
+  }
+
+  :focus-visible {
+    outline: 2px solid rgb(var(--c-accent));
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  /* Native date pickers on a dark ground */
+  input[type='date']::-webkit-calendar-picker-indicator {
+    filter: invert(0.7);
+    cursor: pointer;
+  }
+  html.light input[type='date']::-webkit-calendar-picker-indicator {
+    filter: none;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   COMPONENT PRIMITIVES
+   ══════════════════════════════════════════════════════════════════════════ */
+@layer components {
+  /* Bento surface — thin border, large radius, no heavy shadow. */
+  .bento {
+    @apply relative rounded-3xl border border-hair bg-card;
+  }
+
+  .bento-pad {
+    @apply p-5 sm:p-6;
+  }
+
+  .bento-hover {
+    @apply transition-all duration-500 ease-premium hover:border-hair-strong hover:bg-elevated;
+  }
+
+  /* Micro label — the small uppercase caption used throughout */
+  .eyebrow {
+    @apply text-micro uppercase tracking-[0.14em] text-ink-muted;
+  }
+
+  /* Editorial oversized headline */
+  .headline {
+    @apply font-display font-extrabold tracking-[-0.04em] leading-[0.92];
+  }
+
+  /* Buttons ─────────────────────────────────────────────────────────────── */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-full text-sm font-semibold
+           transition-all duration-300 ease-premium select-none whitespace-nowrap
+           disabled:opacity-40 disabled:pointer-events-none;
+  }
+
+  .btn-primary {
+    @apply btn bg-lime text-black hover:bg-lime-soft
+           hover:shadow-[0_10px_36px_-12px_rgba(200,255,0,0.6)] active:scale-[0.98];
+  }
+
+  .btn-secondary {
+    @apply btn border border-hair bg-transparent text-ink
+           hover:border-hair-strong hover:bg-elevated active:scale-[0.98];
+  }
+
+  .btn-ghost {
+    @apply btn text-ink-dim hover:text-ink hover:bg-hair;
+  }
+
+  .btn-danger {
+    @apply btn border border-negative/30 bg-negative/10 text-negative
+           hover:bg-negative/20 active:scale-[0.98];
+  }
+
+  .btn-sm {
+    @apply h-9 px-4 text-[13px];
+  }
+  .btn-md {
+    @apply h-11 px-5;
+  }
+  .btn-lg {
+    @apply h-14 px-7 text-[15px];
+  }
+
+  /* Fields ──────────────────────────────────────────────────────────────── */
+  .field {
+    @apply w-full rounded-2xl border border-hair bg-surface px-4 py-3 text-sm text-ink
+           placeholder:text-ink-muted transition-all duration-300 ease-premium
+           focus:border-accent/50 focus:bg-elevated focus:outline-none
+           focus:ring-4 focus:ring-accent/10;
+  }
+
+  .field-label {
+    @apply mb-2 block text-[13px] font-medium text-ink-dim;
+  }
+
+  select.field {
+    @apply appearance-none bg-no-repeat pr-10;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%239CA3AF' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E");
+    background-position: right 1rem center;
+  }
+
+  /* Icon tile — the small rounded square that fronts most cards */
+  .icon-tile {
+    @apply flex shrink-0 items-center justify-center rounded-2xl border border-hair bg-elevated
+           transition-all duration-300 ease-premium;
+  }
+
+  /* Table shell */
+  .t-head {
+    @apply px-5 py-3 text-left text-micro uppercase tracking-[0.12em] font-semibold text-ink-muted;
+  }
+  .t-cell {
+    @apply px-5 py-4 align-middle text-sm text-ink;
+  }
+  .t-row {
+    @apply border-t border-hair-soft transition-colors duration-300 hover:bg-elevated/60;
+  }
+
+  .hair-x {
+    @apply h-px w-full bg-hair;
+  }
+
+  /* Layered glow used behind the product visual + promo cards */
+  .lime-orb {
+    background: radial-gradient(circle at center, rgb(var(--c-accent) / 0.2) 0%, rgb(var(--c-accent) / 0) 68%);
+  }
+
+  html.light .lime-orb {
+    background: radial-gradient(circle at center, rgb(var(--c-accent) / 0.1) 0%, rgb(var(--c-accent) / 0) 70%);
+  }
+
+  .grid-veil {
+    @apply bg-grid-hair bg-grid;
+    -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, #000 30%, transparent 78%);
+    mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, #000 30%, transparent 78%);
+  }
+
+  /* Skeleton shimmer */
+  .skeleton {
+    @apply relative overflow-hidden rounded-xl bg-elevated;
+  }
+  .skeleton::after {
+    content: '';
+    @apply absolute inset-0 animate-shimmer;
+    background: linear-gradient(90deg, transparent, var(--c-shimmer), transparent);
+    transform: translateX(-100%);
+  }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  /* Stagger helper for entrance animations */
+  .stagger > * {
+    animation: fade-up 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .stagger > *:nth-child(1) { animation-delay: 0.02s; }
+  .stagger > *:nth-child(2) { animation-delay: 0.06s; }
+  .stagger > *:nth-child(3) { animation-delay: 0.1s; }
+  .stagger > *:nth-child(4) { animation-delay: 0.14s; }
+  .stagger > *:nth-child(5) { animation-delay: 0.18s; }
+  .stagger > *:nth-child(6) { animation-delay: 0.22s; }
+  .stagger > *:nth-child(7) { animation-delay: 0.26s; }
+  .stagger > *:nth-child(8) { animation-delay: 0.3s; }
+
+  .safe-bottom {
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.5rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
