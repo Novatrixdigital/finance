@@ -77,11 +77,12 @@ Money always renders with `.tnum` (tabular numerals) so columns align.
 ├── index.html                  Shell, fonts, canonical + social meta
 ├── vite.config.js              Aliases, manual chunks
 ├── tailwind.config.js          The design system
-├── wrangler.toml               Cloudflare Pages config
+├── wrangler.toml               Cloudflare Workers + static assets config
+├── scripts/                    check-env · gen-headers · push-secrets · check-sql
+├── worker/index.js             Optional edge worker (CSP, caching, /healthz)
 ├── public/
-│   ├── _worker.js              Pages Advanced Mode worker (SPA routing, CSP, caching)
-│   ├── _redirects              SPA fallback (used only if _worker.js is removed)
-│   ├── _headers                Static headers (same caveat)
+│   ├── _redirects              SPA fallback
+│   ├── _headers                Base headers (regenerated into dist at build)
 │   └── logo.svg                Favicon / brand mark
 ├── supabase/
 │   ├── novatrix_complete.sql   THE WHOLE DATABASE — run this one file
@@ -410,45 +411,105 @@ media query. A plain-text alternative ships alongside every message.
 
 ---
 
-## 8 · Deploying to Cloudflare Pages
+## 8 · Deploying to Cloudflare
 
-### 8.1 Via the dashboard (recommended)
+The connected build runs two commands:
 
-1. **Workers & Pages → Create → Pages → Connect to Git**.
-2. Build settings:
-   - Build command: `npm run build`
-   - Build output directory: `dist`
-   - Node version: `20` or newer
-3. **Settings → Variables and Secrets** — add to **both** Production and Preview:
-   - `VITE_SUPABASE_URL`
-   - `VITE_SUPABASE_ANON_KEY`
+```
+Executing user build command:  npm run build
+Executing user deploy command: npx wrangler deploy
+```
 
-   Vite inlines `VITE_*` at build time, so these must exist *before* the build runs.
-4. **Custom domains → Set up a custom domain → `finance.novatrixdigital.in`**.
-   If `novatrixdigital.in` is on Cloudflare DNS the CNAME is created for you; otherwise add
-   `CNAME finance → novatrix-digital.pages.dev`.
+That is the **Workers** flow, so `wrangler.toml` is configured for Workers with
+static assets:
 
-### 8.2 Via Wrangler
+```toml
+name = "novatrix-digital"
+compatibility_date = "2024-11-01"
+
+[assets]
+directory = "./dist"
+not_found_handling = "single-page-application"
+```
+
+There is no `main`. With none set, Cloudflare serves the assets straight from its edge and
+`not_found_handling` handles SPA routing, so no custom code sits in the request path — a deep
+link like `/invoices` returns `index.html` with a 200 instead of a 404.
+
+`npm run build` runs three steps:
+
+| Step | What it does |
+| --- | --- |
+| `prebuild` | `check-env.mjs` — fails the build if a secret has a `VITE_` prefix |
+| `build` | `vite build` → `dist/` |
+| `postbuild` | `gen-headers.mjs` — writes `dist/_headers` |
+
+### Environment variables
+
+Set these in the dashboard under **Settings → Variables**, for both production and preview.
+Vite inlines `VITE_*` at **build** time, so they must exist before the build runs.
+
+| Variable | Value |
+| --- | --- |
+| `VITE_SUPABASE_URL` | `https://<project-ref>.supabase.co` |
+| `VITE_SUPABASE_ANON_KEY` | the anon / publishable key |
+
+`VITE_APP_URL`, `VITE_APP_NAME` and `VITE_DEFAULT_CURRENCY` are already in `wrangler.toml`.
+
+**Never** add `SUPABASE_SERVICE_ROLE_KEY`, `RESEND_API_KEY` or `REMINDER_SECRET` here — a build
+environment feeds the client bundle. Those belong to the Edge Function (`npm run secrets:push`).
+
+### Headers
+
+`dist/_headers` is generated rather than checked in, because `connect-src` is narrowed to the
+Supabase project the build was made against:
+
+```
+connect-src 'self' https://<ref>.supabase.co wss://<ref>.supabase.co
+```
+
+It also sets HSTS, `X-Content-Type-Options`, `frame-ancestors`, `object-src 'none'`, one-year
+immutable caching for `/assets/*`, and `no-cache` on `index.html` so a deploy never keeps serving
+stale asset links.
+
+### The optional Worker
+
+`worker/index.js` does the same job in code — Supabase-scoped CSP, immutable caching, plus a
+`/healthz` endpoint. It is **not** wired up, because the static path above needs no code at all.
+To enable it, uncomment `main = "worker/index.js"` in `wrangler.toml` and add `binding = "ASSETS"`
+with `not_found_handling = "none"` under `[assets]`.
+
+It lives in `worker/`, not `public/` — anything in `public/` is copied into `dist/` and would be
+served as a readable static file.
+
+### If the project is on Pages instead
+
+Either set the deploy command to
 
 ```bash
-npm run build
 npx wrangler pages deploy dist --project-name novatrix-digital
 ```
 
-### 8.3 About `public/_worker.js`
+or deploy from your machine:
 
-Because that file is copied into `dist`, Pages runs in **Advanced Mode** — the worker handles
-every request:
+```bash
+npm run deploy:pages
+```
 
-- Hashed assets under `/assets/` → `Cache-Control: immutable, max-age=31536000`
-- `index.html` → `no-cache` (so a deploy never serves stale asset links)
-- Unknown paths → SPA fallback with a **200**, so `/invoices` survives a hard refresh
-- A missing asset still 404s rather than returning HTML as JavaScript
-- Security headers plus a CSP whose `connect-src` is narrowed to your Supabase origin
-- `GET /healthz` for uptime monitoring
+### Local commands
 
-In Advanced Mode `_redirects` and `_headers` are ignored. Delete `public/_worker.js` to fall back
-to the simple static handler driven by `_redirects`.
+```bash
+npm run build          # check env → build → generate headers
+npm run deploy         # build + wrangler deploy      (Workers)
+npm run deploy:pages   # build + wrangler pages deploy (Pages)
+npx wrangler deploy --dry-run   # validate config without deploying
+```
+
+### Custom domain
+
+Add `finance.novatrixdigital.in` under the project's **Settings → Domains**. If
+`novatrixdigital.in` is on Cloudflare DNS the record is created for you; otherwise add
+`CNAME finance → <project>.workers.dev`.
 
 ---
 

@@ -1,59 +1,79 @@
 # ══════════════════════════════════════════════════════════════════════════════
-#  NOVATRIX DIGITAL — Cloudflare Pages
+#  NOVATRIX DIGITAL — Cloudflare configuration
+#  Production: https://finance.novatrixdigital.in
 # ══════════════════════════════════════════════════════════════════════════════
 #
-#  Deploy:
-#    npm run build
-#    npx wrangler pages deploy dist --project-name novatrix-digital
+#  Configured for WORKERS with static assets, because that is what the
+#  connected build actually runs:
 #
-#  Or connect the Git repo in the Cloudflare dashboard with:
-#    Build command      : npm run build
-#    Build output       : dist
-#    Node version       : 20 (or newer)
+#      Executing user build command:  npm run build
+#      Executing user deploy command: npx wrangler deploy
 #
-#  Because public/_worker.js is copied into dist, Pages runs in ADVANCED MODE:
-#  that worker handles every request (SPA routing, caching, security headers)
-#  and the _redirects / _headers files are ignored. Delete public/_worker.js to
-#  fall back to the simple static handler driven by public/_redirects.
+#  The previous config used `pages_build_output_dir`, which only Pages
+#  understands — so `wrangler deploy` failed with
+#  "Missing entry-point to Worker script or to assets directory".
+#
+#  There is deliberately no `main` here. With none set, Cloudflare serves the
+#  assets straight from its edge and `not_found_handling` does the SPA routing,
+#  so no custom code sits in the request path. Headers come from dist/_headers,
+#  which scripts/gen-headers.mjs writes during the build.
+#
+#  ── If this project is actually on PAGES ────────────────────────────────────
+#  Either set the deploy command to
+#      npx wrangler pages deploy dist --project-name novatrix-digital
+#  or run `npm run deploy` locally. Both work without this file.
+#
+#  ── Custom domain ───────────────────────────────────────────────────────────
+#  Add finance.novatrixdigital.in under the project's Settings → Domains.
+#  If novatrixdigital.in is on Cloudflare DNS the record is created for you;
+#  otherwise add  CNAME finance → <project>.workers.dev
+# ══════════════════════════════════════════════════════════════════════════════
 
 name = "novatrix-digital"
-
-# Production hostname: https://finance.novatrixdigital.in
-# Custom domains are attached in the dashboard, not from this file:
-#   Workers & Pages → novatrix-digital → Custom domains → Set up a custom domain
-#   → finance.novatrixdigital.in
-# Cloudflare creates the CNAME automatically when novatrixdigital.in is on
-# Cloudflare DNS. If DNS lives elsewhere, add:
-#   CNAME  finance  novatrix-digital.pages.dev
 compatibility_date = "2024-11-01"
 compatibility_flags = ["nodejs_compat"]
-pages_build_output_dir = "dist"
 
-# ── Environment variables ─────────────────────────────────────────────────────
+# ── Static assets ─────────────────────────────────────────────────────────────
+[assets]
+directory = "./dist"
+
+# A deep link like /invoices is a real page to the user, so unmatched paths
+# return index.html with a 200 and React Router takes over. Without this, a hard
+# refresh on any route other than / would 404.
+not_found_handling = "single-page-application"
+
+# ── Build-time variables ──────────────────────────────────────────────────────
 #
-#  Set these in the Cloudflare dashboard under
-#  Workers & Pages → novatrix-digital → Settings → Variables and Secrets,
-#  for BOTH Production and Preview. Vite inlines VITE_* at build time, so they
-#  must exist before the build step runs.
+#  Vite inlines VITE_* at BUILD time, so these must also exist in the dashboard
+#  under Settings → Variables, for both production and preview:
 #
-#    VITE_SUPABASE_URL       https://<project-ref>.supabase.co
-#    VITE_SUPABASE_ANON_KEY  <anon / publishable key>
+#      VITE_SUPABASE_URL       https://<project-ref>.supabase.co
+#      VITE_SUPABASE_ANON_KEY  <anon / publishable key>
 #
-#  NEVER add these here — a Pages build environment feeds the client bundle:
-#    SUPABASE_SERVICE_ROLE_KEY  bypasses Row Level Security entirely
-#    RESEND_API_KEY             can send mail as your verified domain
-#    REMINDER_SECRET            authorises the reminder function
+#  NEVER add any of these here or in the dashboard — a build environment feeds
+#  the client bundle:
+#      SUPABASE_SERVICE_ROLE_KEY  bypasses Row Level Security entirely
+#      RESEND_API_KEY             can send mail as your verified domain
+#      REMINDER_SECRET            authorises the reminder function
 #
 #  Those three belong to the Supabase Edge Function. Upload them with
 #  `npm run secrets:push`, or set them in the Supabase dashboard under
-#  Project Settings -> Edge Functions -> Secrets.
+#  Project Settings → Edge Functions → Secrets.
 
 [vars]
 VITE_APP_URL = "https://finance.novatrixdigital.in"
 VITE_APP_NAME = "Novatrix Digital"
 VITE_DEFAULT_CURRENCY = "INR"
 
-# The two Supabase values are intentionally NOT committed. Uncomment locally
-# only if you are deploying a throwaway preview project.
-# VITE_SUPABASE_URL = ""
-# VITE_SUPABASE_ANON_KEY = ""
+# ── Optional: run worker/index.js in front of the assets ──────────────────────
+#
+#  worker/index.js adds a Supabase-scoped CSP, immutable caching for hashed
+#  assets and a /healthz endpoint. It is not wired up by default because the
+#  static path above needs no code at all. To enable it, uncomment:
+#
+#      main = "worker/index.js"
+#
+#  and inside [assets] add:
+#
+#      binding = "ASSETS"
+#      not_found_handling = "none"   # the worker does the SPA fallback itself

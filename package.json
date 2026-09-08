@@ -9,12 +9,14 @@
     "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
-    "deploy": "npm run build && wrangler pages deploy dist",
+    "deploy": "npm run build && wrangler deploy",
     "check:env": "node scripts/check-env.mjs",
     "prebuild": "node scripts/check-env.mjs",
     "secrets:push": "node scripts/push-secrets.mjs",
     "functions:deploy": "supabase functions deploy send-reminders --no-verify-jwt",
-    "check:sql": "node scripts/check-sql.cjs supabase/novatrix_complete.sql && node scripts/check-sql.cjs supabase/create_account.sql"
+    "check:sql": "node scripts/check-sql.cjs supabase/novatrix_complete.sql && node scripts/check-sql.cjs supabase/create_account.sql",
+    "postbuild": "node scripts/gen-headers.mjs",
+    "deploy:pages": "npm run build && wrangler pages deploy dist --project-name novatrix-digital"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.47.10",
