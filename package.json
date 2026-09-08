@@ -13,7 +13,8 @@
     "check:env": "node scripts/check-env.mjs",
     "prebuild": "node scripts/check-env.mjs",
     "secrets:push": "node scripts/push-secrets.mjs",
-    "functions:deploy": "supabase functions deploy send-reminders --no-verify-jwt"
+    "functions:deploy": "supabase functions deploy send-reminders --no-verify-jwt",
+    "check:sql": "node scripts/check-sql.cjs supabase/novatrix_complete.sql && node scripts/check-sql.cjs supabase/create_account.sql"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.47.10",

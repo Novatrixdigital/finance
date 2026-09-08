@@ -2836,7 +2836,7 @@ returns json
 language plpgsql
 security definer
 set search_path = public
-as $
+as $$
 declare
   v_uid   uuid := (select auth.uid());
   v_ws    uuid;
@@ -2888,7 +2888,7 @@ begin
 
   return json_build_object('ok', true, 'email', v_email);
 end;
-$;
+$$;
 
 revoke all on function public.send_test_reminder() from public, anon;
 grant execute on function public.send_test_reminder() to authenticated;
