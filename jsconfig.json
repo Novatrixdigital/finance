@@ -6,6 +6,7 @@
     "module": "ESNext",
     "target": "ESNext",
     "moduleResolution": "bundler",
+    "ignoreDeprecations": "6.0",
     "checkJs": false
   },
   "include": ["src/**/*"],
