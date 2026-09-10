@@ -313,10 +313,28 @@ export default {
     // a .js file is the classic white-screen bug.
     if (/\.[a-z0-9]{2,5}$/i.test(pathname)) return asset;
 
-    const shell = await env.ASSETS.fetch(new Request(new URL('/index.html', url), request));
+    // Fetch the shell WITHOUT forwarding the caller's headers.
+    //
+    // This used to pass `request` through, which carried its If-None-Match
+    // along with it. dist/_headers marks /index.html `no-cache,
+    // must-revalidate`, so every refresh of a deep link revalidated, the
+    // assets binding answered 304 with a null body, and the line below forced
+    // that empty body out as a 200 — a blank white page on refresh that a
+    // fresh tab never reproduced. A bare GET can never come back 304.
+    const shell = await env.ASSETS.fetch(new URL('/index.html', url));
+    if (!shell.ok) return shell;
+
     return new Response(shell.body, {
       status: 200,
-      headers: shell.headers,
+      headers: {
+        'Content-Type': 'text/html; charset=utf-8',
+        // The shell is route-agnostic and points at hashed assets, so it must
+        // be revalidated rather than replayed from cache after a deploy. No
+        // ETag is copied across: one shared by every route is exactly what let
+        // the conditional request go wrong.
+        'Cache-Control': 'no-cache, must-revalidate',
+        'X-Content-Type-Options': 'nosniff',
+      },
     });
   },
 
