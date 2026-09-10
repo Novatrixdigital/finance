@@ -3,7 +3,6 @@ import {
   Shield,
   Bell,
   Send,
-  DatabaseZap,
   Trash2,
   LogOut,
   Check,
@@ -36,7 +35,6 @@ export default function Settings() {
   });
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [seeding, setSeeding] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
 
@@ -140,18 +138,6 @@ export default function Settings() {
       `Test reminder queued for ${data.email}. It sends on the next reminder run.`,
       7000,
     );
-  };
-
-  const loadDemo = async () => {
-    setSeeding(true);
-    const { data, error } = await supabase.rpc('seed_demo_data');
-    setSeeding(false);
-
-    if (error) return toast.error(readableError(error));
-    if (data?.ok === false) return toast.error(data.error);
-
-    toast.success('Demo data loaded.');
-    refresh();
   };
 
   const resetData = async () => {
@@ -420,22 +406,16 @@ export default function Settings() {
 
         {/* ── Data ──────────────────────────────────────────────────────── */}
         <Card>
-          <CardHeader title="Data" subtitle="Populate a demo book, or clear everything and start clean." />
+          <CardHeader title="Data" subtitle="Export from any page, or clear everything and start clean." />
 
+          {/*
+            "Load demo data" used to sit here. It called seed_demo_data(),
+            which deleted the caller's accounts, transactions, invoices,
+            payments, budgets, goals, recurring rules and contacts before
+            writing its sample book — a single click away from erasing real
+            records. Removed, along with the function itself.
+          */}
           <div className="space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-hair bg-surface p-4">
-              <div className="min-w-0">
-                <p className="text-[13.5px] font-medium text-ink">Load demo data</p>
-                <p className="mt-1 text-[12px] leading-relaxed text-ink-muted">
-                  Six months of transactions, invoices, budgets and goals across both workspaces.
-                  Replaces any existing records.
-                </p>
-              </div>
-              <Button variant="secondary" size="sm" icon={DatabaseZap} onClick={loadDemo} loading={seeding}>
-                Load demo
-              </Button>
-            </div>
-
             <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-negative/25 bg-negative/[0.04] p-4">
               <div className="min-w-0">
                 <p className="text-[13.5px] font-medium text-ink">Clear all financial data</p>

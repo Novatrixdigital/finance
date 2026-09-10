@@ -10,7 +10,6 @@ import {
   CalendarClock,
   Zap,
   Ban,
-  Sparkles,
 } from 'lucide-react';
 import { PageHeader, StatStrip } from '@/components/layout/PageHeader';
 import {
@@ -57,7 +56,6 @@ export default function Subscriptions() {
   const [confirm, setConfirm] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [running, setRunning] = useState(false);
-  const [seeding, setSeeding] = useState(false);
 
   const { rows, loading, update, remove, refresh } = useCollection('subscriptions', {
     select: '*, category:categories(name, color), account:accounts(name)',
@@ -121,17 +119,6 @@ export default function Subscriptions() {
     if (error) return toast.error(readableError(error));
     const n = Number(data) || 0;
     toast.success(n ? `Rolled ${n} renewal${n === 1 ? '' : 's'} forward.` : 'Nothing is due yet.');
-    refresh();
-    summary.refresh();
-  };
-
-  const loadDemo = async () => {
-    setSeeding(true);
-    const { data, error } = await supabase.rpc('seed_demo_subscriptions');
-    setSeeding(false);
-    if (error) return toast.error(readableError(error));
-    if (data?.ok === false) return toast.error(data.error);
-    toast.success(`Loaded ${data.subscriptions} subscriptions and ${data.reminders} reminders.`);
     refresh();
     summary.refresh();
   };
@@ -262,16 +249,12 @@ export default function Subscriptions() {
                 : 'Add what bills you on a cycle and Novatrix will total the yearly cost and email you before each renewal.'
             }
             action={
-              <div className="flex flex-wrap justify-center gap-3">
-                <Button size="sm" icon={Plus} onClick={() => open('subscription')}>
-                  Add subscription
-                </Button>
-                {!rows.length && (
-                  <Button variant="secondary" size="sm" icon={Sparkles} onClick={loadDemo} loading={seeding}>
-                    Load examples
-                  </Button>
-                )}
-              </div>
+              /* "Load examples" used to sit beside this. It called
+                 seed_demo_subscriptions(), which deleted every subscription
+                 the user owned before inserting its nine samples. */
+              <Button size="sm" icon={Plus} onClick={() => open('subscription')}>
+                Add subscription
+              </Button>
             }
           />
         </Card>
