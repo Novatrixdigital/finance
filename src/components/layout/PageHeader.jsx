@@ -37,10 +37,27 @@ export function PageHeader({ title, accent, subtitle, actions, children }) {
   );
 }
 
-/** A compact stat strip used at the top of several module pages. */
+/**
+ * A compact stat strip used at the top of several module pages.
+ *
+ * The column count follows the number of figures. It was pinned at four, so
+ * the fifth stat on a page — Accounts gained one when cash became its own
+ * figure — dropped onto a row of its own and sat there looking orphaned.
+ */
+const STRIP_COLUMNS = {
+  1: 'sm:grid-cols-1',
+  2: 'sm:grid-cols-2',
+  3: 'sm:grid-cols-3',
+  4: 'sm:grid-cols-4',
+  5: 'sm:grid-cols-3 lg:grid-cols-5',
+  6: 'sm:grid-cols-3 lg:grid-cols-6',
+};
+
 export function StatStrip({ items }) {
+  const columns = STRIP_COLUMNS[items.length] || 'sm:grid-cols-4';
+
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+    <div className={cx('grid grid-cols-2 gap-3', columns)}>
       {items.map(({ label, value, tone, meta }) => (
         <div key={label} className="rounded-2xl border border-hair bg-card px-4 py-3.5">
           <p className="truncate text-[11.5px] text-ink-muted">{label}</p>

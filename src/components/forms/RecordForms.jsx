@@ -240,14 +240,27 @@ export function AccountForm({ open, onClose, record }) {
           )}
         </div>
 
-        <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-hair bg-surface px-4 py-3">
+        {/*
+          One primary account across the whole app, not one per workspace.
+          The accounts_single_primary trigger clears the flag on every other
+          account the moment this is saved, so Personal and Business can never
+          both show a star. The wording says so plainly — it used to read
+          "for the workspace", which described behaviour the schema never had.
+        */}
+        <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-hair bg-surface px-4 py-3">
           <input
             type="checkbox"
             checked={Boolean(form.is_primary)}
             onChange={set('is_primary')}
-            className="h-4 w-4 accent-[#C8FF00]"
+            className="mt-0.5 h-4 w-4 accent-[#C8FF00]"
           />
-          <span className="text-[13px] text-ink-dim">Make this the primary account for the workspace</span>
+          <span className="text-[13px] leading-relaxed text-ink-dim">
+            Make this my primary account
+            <span className="mt-0.5 block text-[11.5px] text-ink-muted">
+              Only one account can be primary. Whichever is currently marked — Personal or
+              Business — gives it up.
+            </span>
+          </span>
         </label>
 
         <Textarea label="Notes" value={form.notes || ''} onChange={set('notes')} placeholder="Optional" />
@@ -273,6 +286,7 @@ export function PaymentForm({ open, onClose, record, direction = 'outgoing' }) {
     notes: '',
     contact_id: '',
     account_id: '',
+    category_id: '',
     workspace_id: writeWorkspace?.id || '',
   };
 
@@ -285,7 +299,12 @@ export function PaymentForm({ open, onClose, record, direction = 'outgoing' }) {
     successText: 'Payment scheduled.',
   });
 
-  const { accounts, contacts } = useFormOptions(form.workspace_id);
+  const { accounts, contacts, categoriesByKind } = useFormOptions(form.workspace_id);
+
+  /* A settled payment posts a real ledger entry now, so it wants a category
+     the same way a transaction does — outgoing spends, incoming receives. */
+  const categories = categoriesByKind[form.direction === 'incoming' ? 'income' : 'expense'] || [];
+  const willPost = form.status === 'paid' && Boolean(form.account_id);
 
   const onSave = () =>
     save(
@@ -301,6 +320,7 @@ export function PaymentForm({ open, onClose, record, direction = 'outgoing' }) {
         notes: f.notes?.trim() || null,
         contact_id: f.contact_id || null,
         account_id: f.account_id || null,
+        category_id: f.category_id || null,
       }),
       (f) =>
         collect({
@@ -347,7 +367,12 @@ export function PaymentForm({ open, onClose, record, direction = 'outgoing' }) {
         )}
 
         <div className="grid gap-4 sm:grid-cols-2">
-          <Select label="Account" value={form.account_id} onChange={set('account_id')}>
+          <Select
+            label="Account"
+            value={form.account_id}
+            onChange={set('account_id')}
+            hint="Which account the money moves through."
+          >
             <option value="">None</option>
             {accounts.map((a) => (
               <option key={a.id} value={a.id}>
@@ -365,6 +390,15 @@ export function PaymentForm({ open, onClose, record, direction = 'outgoing' }) {
           </Select>
         </div>
 
+        <Select label="Category" value={form.category_id} onChange={set('category_id')}>
+          <option value="">Uncategorised</option>
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </Select>
+
         <Select label="Method" value={form.method} onChange={set('method')}>
           {PAYMENT_METHODS.map((m) => (
             <option key={m} value={m}>
@@ -374,6 +408,31 @@ export function PaymentForm({ open, onClose, record, direction = 'outgoing' }) {
         </Select>
 
         <Textarea label="Notes" value={form.notes || ''} onChange={set('notes')} placeholder="Optional" />
+
+        {/* Marking a payment paid used to change nothing but the badge. It
+            now writes a ledger entry, so it is worth saying out loud which
+            way the balance is about to move. */}
+        {willPost && (
+          <div className="rounded-2xl border border-accent/25 bg-lime/[0.05] px-4 py-3">
+            <p className="text-[12.5px] leading-relaxed text-ink-dim">
+              Saving this records a{' '}
+              <span className="font-medium text-ink">
+                {form.direction === 'incoming' ? 'deposit into' : 'withdrawal from'}
+              </span>{' '}
+              {accounts.find((a) => a.id === form.account_id)?.name || 'the account'}, and it will
+              show in your transactions and this month's totals.
+            </p>
+          </div>
+        )}
+
+        {form.status === 'paid' && !form.account_id && (
+          <div className="rounded-2xl border border-warning/30 bg-warning/[0.06] px-4 py-3">
+            <p className="text-[12.5px] leading-relaxed text-ink-dim">
+              No account chosen, so this stays a record only — no balance moves and it will not
+              appear in your spending.
+            </p>
+          </div>
+        )}
       </div>
     </Modal>
   );

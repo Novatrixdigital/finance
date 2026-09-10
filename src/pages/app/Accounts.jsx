@@ -35,7 +35,8 @@ export default function Accounts() {
     const liabilities = Math.abs(
       sumBy(active.filter((a) => Number(a.current_balance) < 0), (a) => a.current_balance),
     );
-    return { assets, liabilities, net: assets - liabilities, count: active.length };
+    const cash = sumBy(active.filter((a) => a.type === 'cash'), (a) => a.current_balance);
+    return { assets, liabilities, cash, net: assets - liabilities, count: active.length };
   }, [active]);
 
   const confirmDelete = async () => {
@@ -66,6 +67,11 @@ export default function Accounts() {
             { label: 'Accounts', value: totals.count },
             { label: 'Assets', value: formatMoney(totals.assets), tone: 'lime' },
             { label: 'Liabilities', value: formatMoney(totals.liabilities), tone: 'negative' },
+            {
+              label: 'Cash in hand',
+              value: formatMoney(totals.cash),
+              meta: 'Notes and coins',
+            },
             { label: 'Net position', value: formatMoney(totals.net) },
           ]}
         />
@@ -115,8 +121,14 @@ export default function Accounts() {
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
                         <p className="truncate text-[14px] font-semibold text-ink">{account.name}</p>
+                        {/* Exactly one account carries this, app-wide — the
+                            accounts_single_primary trigger guarantees it. */}
                         {account.is_primary && (
-                          <Star size={12} className="shrink-0 fill-accent text-accent" />
+                          <Star
+                            size={12}
+                            className="shrink-0 fill-accent text-accent"
+                            aria-label="Primary account"
+                          />
                         )}
                       </div>
                       <p className="mt-0.5 truncate text-[11.5px] text-ink-muted">
@@ -185,7 +197,20 @@ export default function Accounts() {
 
                   <button
                     type="button"
-                    onClick={() => open('transaction', { defaultType: 'expense' })}
+                    onClick={() =>
+                      open('transaction', {
+                        defaultType: 'expense',
+                        // Pre-point the entry at this account, so "Add entry"
+                        // on a cash card actually debits cash rather than
+                        // opening a blank form on whatever comes first.
+                        preset: {
+                          type: 'expense',
+                          workspace_id: account.workspace_id,
+                          account_id: account.id,
+                          ...(account.type === 'cash' ? { payment_method: 'Cash' } : {}),
+                        },
+                      })
+                    }
                     className="inline-flex items-center gap-1 text-[11.5px] font-medium text-ink-muted transition-colors hover:text-accent"
                   >
                     Add entry

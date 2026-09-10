@@ -21,6 +21,9 @@ export function useDashboard() {
   );
 
   const summary = useRpc('dashboard_summary', scopeParam);
+  // Cash lives in its own RPC rather than being folded into dashboard_summary,
+  // so the base schema and the migration cannot drift out of step over one key.
+  const cash = useRpc('cash_summary', scopeParam);
   const cashFlow = useRpc('cash_flow_series', flowParams);
   const breakdown = useRpc('expense_breakdown', breakdownParams);
 
@@ -65,8 +68,10 @@ export function useDashboard() {
       receivableCount: n(s.receivable_count),
       upcoming: n(s.upcoming_payments),
       upcomingCount: n(s.upcoming_count),
+      cashInHand: n((cash.data || {}).cash_in_hand),
+      cashSpentMonth: n((cash.data || {}).spent_month),
     };
-  }, [summary.data]);
+  }, [summary.data, cash.data]);
 
   const chart = useMemo(
     () =>
@@ -105,6 +110,7 @@ export function useDashboard() {
 
   const refreshAll = () => {
     summary.refresh();
+    cash.refresh();
     cashFlow.refresh();
     breakdown.refresh();
     transactions.refresh();

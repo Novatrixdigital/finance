@@ -5,6 +5,7 @@ import {
   TrendingUp,
   TrendingDown,
   Wallet,
+  Banknote,
   Hourglass,
   CalendarClock,
 } from 'lucide-react';
@@ -78,9 +79,9 @@ function StatCard({ label, sub, value, delta, deltaLabel, Icon, tone = 'neutral'
 }
 
 /**
- * The five headline figures under the hero.
+ * The six headline figures under the hero.
  *
- * A five-column grid on wide screens; it steps down to three, then two, then
+ * A six-column grid on wide screens; it steps down to three, then two, then
  * a horizontal scroll strip on phones so nothing is ever crushed.
  */
 export function SummaryCards({ stats }) {
@@ -116,6 +117,17 @@ export function SummaryCards({ stats }) {
       to: '/transactions',
     },
     {
+      key: 'cash',
+      label: 'Cash in Hand',
+      value: stats.cashInHand,
+      meta:
+        stats.cashSpentMonth > 0
+          ? `${formatMoney(stats.cashSpentMonth)} spent this month`
+          : 'Nothing spent this month',
+      Icon: Banknote,
+      to: '/cash',
+    },
+    {
       key: 'receivables',
       label: 'Pending Receivables',
       value: stats.receivables,
@@ -136,7 +148,7 @@ export function SummaryCards({ stats }) {
 
   return (
     <div className="-mx-4 overflow-x-auto px-4 no-scrollbar sm:mx-0 sm:overflow-visible sm:px-0">
-      <div className="stagger grid min-w-[42rem] grid-cols-5 gap-4 sm:min-w-0 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+      <div className="stagger grid min-w-[50rem] grid-cols-6 gap-4 sm:min-w-0 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         {cards.map(({ key, ...card }) => (
           // React warns when the key prop travels inside a spread.
           <StatCard key={key} {...card} />

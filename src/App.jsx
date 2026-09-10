@@ -22,6 +22,7 @@ import { ForgotPassword, ResetPassword, AuthCallback } from '@/pages/auth/Passwo
 const Dashboard = lazy(() => import('@/pages/app/Dashboard'));
 const Transactions = lazy(() => import('@/pages/app/Transactions'));
 const Accounts = lazy(() => import('@/pages/app/Accounts'));
+const Cash = lazy(() => import('@/pages/app/Cash'));
 const Payments = lazy(() => import('@/pages/app/Payments'));
 const Invoices = lazy(() => import('@/pages/app/Invoices'));
 const Budgets = lazy(() => import('@/pages/app/Budgets'));
@@ -40,6 +41,7 @@ const APP_ROUTES = [
   { path: 'dashboard', Component: Dashboard },
   { path: 'transactions', Component: Transactions },
   { path: 'accounts', Component: Accounts },
+  { path: 'cash', Component: Cash },
   { path: 'payments', Component: Payments },
   { path: 'invoices', Component: Invoices },
   { path: 'budgets', Component: Budgets },

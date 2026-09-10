@@ -39,7 +39,18 @@ const blank = (type = 'expense', workspaceId = '') => ({
  * The workspace picker only appears in Combined mode, where there is no single
  * obvious destination for a new record.
  */
-export function TransactionForm({ open, onClose, record = null, defaultType = 'expense' }) {
+/**
+ * `preset` pre-fills a new entry without locking it — the Cash page uses it
+ * to open a bank→cash withdrawal with both sides already chosen. It is
+ * ignored when editing, so it can never overwrite a saved record.
+ */
+export function TransactionForm({
+  open,
+  onClose,
+  record = null,
+  defaultType = 'expense',
+  preset = null,
+}) {
   const { user } = useAuth();
   const { writeWorkspace, workspaces, isCombined } = useWorkspace();
   const toast = useToast();
@@ -70,10 +81,14 @@ export function TransactionForm({ open, onClose, record = null, defaultType = 'e
         notes: record.notes || '',
       });
     } else {
-      setForm(blank(defaultType, writeWorkspace?.id));
+      setForm({ ...blank(defaultType, writeWorkspace?.id), ...(preset || {}) });
     }
     setErrors({});
-  }, [open, record, defaultType, writeWorkspace?.id]);
+    // `preset` is a fresh object literal at every call site, so it is compared
+    // by its contents rather than identity — otherwise the form would reset
+    // itself on every parent render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, record, defaultType, writeWorkspace?.id, JSON.stringify(preset || null)]);
 
   const set = (key) => (e) => {
     const value = e?.target ? e.target.value : e;
@@ -87,6 +102,40 @@ export function TransactionForm({ open, onClose, record = null, defaultType = 'e
   };
 
   const categories = categoriesByKind[form.type] || [];
+
+  /* ── Cash ───────────────────────────────────────────────────────────────
+     Cash is an ordinary account of type 'cash', so an entry booked against
+     it moves cash in hand AND lands in the month's spend — the ledger
+     triggers do both. What used to go wrong was booking a cash payment
+     against a bank account: the spend counted, but the cash never left. */
+  const cashAccount = useMemo(() => accounts.find((a) => a.type === 'cash') || null, [accounts]);
+  const selectedAccount = useMemo(
+    () => accounts.find((a) => a.id === form.account_id) || null,
+    [accounts, form.account_id],
+  );
+  const paidInCash = String(form.payment_method || '').toLowerCase() === 'cash';
+  const cashMismatch =
+    paidInCash && form.type !== 'transfer' && selectedAccount && selectedAccount.type !== 'cash';
+
+  /* Choosing "Cash" points the entry at the cash account, so physical money
+     is actually debited. Only on an explicit change — never on load, which
+     would quietly re-book a saved record the moment it was opened. */
+  const setPaymentMethod = (e) => {
+    const value = e.target.value;
+    setForm((f) => {
+      const next = { ...f, payment_method: value };
+      if (
+        value.toLowerCase() === 'cash' &&
+        f.type !== 'transfer' &&
+        cashAccount &&
+        f.account_id !== cashAccount.id
+      ) {
+        next.account_id = cashAccount.id;
+      }
+      return next;
+    });
+    setErrors((prev) => (prev.account_id ? { ...prev, account_id: undefined } : prev));
+  };
   const workspaceCurrency = useMemo(
     () => accounts.find((a) => a.id === form.account_id)?.currency || 'INR',
     [accounts, form.account_id],
@@ -310,7 +359,17 @@ export function TransactionForm({ open, onClose, record = null, defaultType = 'e
             onChange={set('txn_date')}
             error={errors.txn_date}
           />
-          <Select label="Payment method" name="payment_method" value={form.payment_method} onChange={set('payment_method')}>
+          <Select
+            label="Payment method"
+            name="payment_method"
+            value={form.payment_method}
+            onChange={setPaymentMethod}
+            hint={
+              paidInCash && cashAccount && selectedAccount?.type === 'cash'
+                ? 'Comes out of cash in hand.'
+                : undefined
+            }
+          >
             {PAYMENT_METHODS.map((m) => (
               <option key={m} value={m}>
                 {m}
@@ -318,6 +377,28 @@ export function TransactionForm({ open, onClose, record = null, defaultType = 'e
             ))}
           </Select>
         </div>
+
+        {cashMismatch && (
+          <div className="rounded-2xl border border-warning/30 bg-warning/[0.06] px-4 py-3">
+            <p className="text-[12.5px] leading-relaxed text-ink-dim">
+              Paid in cash but booked against{' '}
+              <span className="font-medium text-ink">{selectedAccount.name}</span>. The spend will
+              count, but cash in hand will not drop.
+              {cashAccount && (
+                <>
+                  {' '}
+                  <button
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, account_id: cashAccount.id }))}
+                    className="font-medium text-accent underline underline-offset-2"
+                  >
+                    Book it to {cashAccount.name} instead
+                  </button>
+                </>
+              )}
+            </p>
+          </div>
+        )}
 
         <div className="grid gap-4 sm:grid-cols-2">
           {contacts.length > 0 && form.type !== 'transfer' && (

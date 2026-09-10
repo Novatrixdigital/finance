@@ -88,19 +88,48 @@ export function WorkspaceProvider({ children }) {
     [workspaces],
   );
 
-  /* Materialise any due recurring rules once per session. */
+  /* Materialise anything the calendar has made due, once per session.
+   *
+   * Subscriptions were missing from this: run_due_subscriptions() existed but
+   * was only reachable from a button on the Subscriptions page, so a renewal
+   * never posted to the ledger unless someone went and pressed it. Recurring
+   * rules and reminders are rolled at the same time.
+   *
+   * supabase.rpc() resolves with { data, error } rather than rejecting, so the
+   * old .catch() never fired and the "done for today" marker was written even
+   * when the call had failed — leaving the rest of the day with nothing run.
+   * The result is inspected instead. */
   useEffect(() => {
     if (!user) return;
-    const key = `novatrix.recurring.${user.id}`;
+    const key = `novatrix.duework.${user.id}`;
     const today = new Date().toDateString();
     if (window.sessionStorage.getItem(key) === today) return;
 
-    supabase
-      .rpc('run_due_recurring')
-      .then(() => window.sessionStorage.setItem(key, today))
-      .catch(() => {
-        /* non-critical: the dashboard still works without it */
-      });
+    let cancelled = false;
+
+    (async () => {
+      const results = await Promise.all([
+        supabase.rpc('run_due_recurring'),
+        supabase.rpc('run_due_subscriptions'),
+        supabase.rpc('generate_reminders'),
+      ]);
+
+      if (cancelled) return;
+
+      // Only mark the day done if nothing errored, so a transient failure
+      // gets another attempt rather than being skipped until tomorrow.
+      if (results.every((r) => !r.error)) {
+        try {
+          window.sessionStorage.setItem(key, today);
+        } catch {
+          /* private mode — it just runs again next load */
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [user]);
 
   const value = useMemo(

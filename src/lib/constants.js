@@ -31,6 +31,7 @@ export const NAV_ITEMS = [
   { to: '/dashboard', label: 'Dashboard', icon: 'LayoutGrid' },
   { to: '/transactions', label: 'Transactions', icon: 'ArrowLeftRight' },
   { to: '/accounts', label: 'Accounts', icon: 'Landmark' },
+  { to: '/cash', label: 'Cash', icon: 'Wallet' },
   { to: '/payments', label: 'Payments', icon: 'IndianRupee' },
   { to: '/invoices', label: 'Invoices', icon: 'FileText', businessOnly: true },
   { to: '/budgets', label: 'Budgets', icon: 'PieChart' },

@@ -14,12 +14,13 @@
     "prebuild": "node scripts/check-env.mjs",
     "secrets:push": "node scripts/push-secrets.mjs",
     "functions:deploy": "supabase functions deploy send-reminders --no-verify-jwt",
-    "check:sql": "node scripts/check-sql.cjs supabase/novatrix_complete.sql && node scripts/check-sql.cjs supabase/create_account.sql",
+    "check:sql": "node scripts/check-sql.cjs supabase/novatrix_complete.sql && node scripts/check-sql.cjs supabase/migration_002_cash_and_fixes.sql",
     "postbuild": "node scripts/gen-headers.mjs",
     "deploy:pages": "npm run build && wrangler pages deploy dist --project-name novatrix-digital",
     "cf:dev": "npm run build && wrangler dev",
     "cf:tail": "wrangler tail",
-    "icons": "node scripts/gen-icons.mjs"
+    "icons": "node scripts/gen-icons.mjs",
+    "check:worker": "node scripts/check-worker.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.47.10",

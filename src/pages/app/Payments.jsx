@@ -19,6 +19,21 @@ import { formatMoney, formatDate, daysUntil, toISODate } from '@/lib/format';
 import { PAYMENT_STATUS } from '@/lib/constants';
 import { cx, sumBy, downloadCSV } from '@/lib/utils';
 
+/**
+ * Whether a payment has fallen overdue, as of right now.
+ *
+ * The database derives this too, but only on write — payments_derive_status is
+ * a BEFORE trigger, so a row due yesterday keeps saying "Upcoming" until
+ * something happens to touch it. Reading the calendar here keeps the badge
+ * honest without rewriting rows just to change how they look.
+ */
+function effectiveStatus(payment) {
+  if (payment.status === 'upcoming' || payment.status === 'pending') {
+    if (daysUntil(payment.due_date) < 0) return 'overdue';
+  }
+  return payment.status;
+}
+
 const TABS = [
   { id: 'outgoing', label: 'Outgoing' },
   { id: 'incoming', label: 'Incoming' },
@@ -54,14 +69,30 @@ export default function Payments() {
     return {
       due: sumBy(pending, (p) => p.amount),
       count: pending.length,
-      overdue: sumBy(filtered.filter((p) => p.status === 'overdue'), (p) => p.amount),
+      overdue: sumBy(
+        filtered.filter((p) => effectiveStatus(p) === 'overdue'),
+        (p) => p.amount,
+      ),
       paid: sumBy(filtered.filter((p) => p.status === 'paid'), (p) => p.amount),
     };
   }, [filtered]);
 
+  /*
+   * Settling a payment now posts a ledger entry and moves the account
+   * balance — the payments_post_to_ledger trigger does it. Before that this
+   * only changed a badge, so money marked paid never actually left an
+   * account and never showed up in the month's spend.
+   */
   const markPaid = async (payment) => {
     const { error } = await update(payment.id, { status: 'paid', paid_date: toISODate() });
-    if (!error) toast.success(`${payment.name} marked as paid.`);
+    if (error) return;
+
+    toast.success(
+      payment.account_id
+        ? `${payment.name} marked paid — ${payment.account?.name || 'the account'} updated.`
+        : `${payment.name} marked as paid. Add an account to it if you want the balance to move.`,
+    );
+    refresh();
   };
 
   const confirmDelete = async () => {
@@ -155,7 +186,8 @@ export default function Payments() {
               </thead>
               <tbody>
                 {filtered.map((p) => {
-                  const status = PAYMENT_STATUS[p.status] || PAYMENT_STATUS.upcoming;
+                  const shown = effectiveStatus(p);
+                  const status = PAYMENT_STATUS[shown] || PAYMENT_STATUS.upcoming;
                   const days = daysUntil(p.due_date);
                   const settled = p.status === 'paid' || p.status === 'cancelled';
 
@@ -166,11 +198,11 @@ export default function Payments() {
                           <span
                             className={cx(
                               'h-8 w-1 shrink-0 rounded-full',
-                              p.status === 'overdue'
+                              shown === 'overdue'
                                 ? 'bg-negative'
-                                : p.status === 'paid'
+                                : shown === 'paid'
                                   ? 'bg-lime'
-                                  : p.status === 'pending'
+                                  : shown === 'pending'
                                     ? 'bg-negative/60'
                                     : 'bg-warning',
                             )}
