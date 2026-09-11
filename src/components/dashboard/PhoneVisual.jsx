@@ -85,10 +85,24 @@ const ACTIONS = [
  * The hero product shot: two overlapping app screens, one personal and one
  * business, wrapped in editorial annotations.
  *
- * It is fed the user's real balance and transactions, so the "screenshot" is
- * genuinely their account rather than a static mock.
+ * It is fed the real balances and transactions, so the "screenshot" is
+ * genuinely the user's account rather than a static mock.
+ *
+ * Each screen takes its OWN figure. The front screen used to be handed the
+ * active scope total, so the panel captioned PERSONAL showed the business
+ * balance in Business view and the combined total in Combined view — the one
+ * thing a panel with a fixed caption must never do. `shared` is money in
+ * accounts marked "use in both"; it is shown on the personal screen as a
+ * separate line rather than added into either side.
  */
-export function PhoneVisual({ totalBalance = 0, growth = 0, transactions = [], trend = [], business = 0 }) {
+export function PhoneVisual({
+  personal = 0,
+  business = 0,
+  shared = 0,
+  growth = 0,
+  transactions = [],
+  trend = [],
+}) {
   const recent = transactions.slice(0, 3);
 
   return (
@@ -164,15 +178,21 @@ export function PhoneVisual({ totalBalance = 0, growth = 0, transactions = [], t
               </span>
             </div>
 
-            <p className="text-[9px] uppercase tracking-[0.12em] text-white/35">Total Balance</p>
+            <p className="text-[9px] uppercase tracking-[0.12em] text-white/35">Personal Balance</p>
             <p className="mt-1 text-[21px] font-bold leading-none tracking-tight text-white tnum">
-              {formatMoney(totalBalance)}
+              {formatMoney(personal)}
             </p>
             <p className="mt-1.5 flex items-center gap-1 text-[9.5px] font-medium text-lime">
               <TrendingUp size={9} />
               {growth >= 0 ? '+' : ''}
               {growth}% this month
             </p>
+
+            {shared > 0 && (
+              <p className="mt-1 text-[8.5px] text-white/35">
+                + {formatCompact(shared, { withSymbol: true })} shared with business
+              </p>
+            )}
 
             <MiniTrend points={trend} />
 

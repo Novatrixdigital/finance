@@ -36,6 +36,8 @@ export function useCash({ from = null, to = null, limit = 200 } = {}) {
     select: 'id, name, type, current_balance, currency, workspace_id, is_active, icon, color',
     filters: useMemo(() => ({ type: 'cash', is_active: true }), []),
     orderBy: { column: 'name', ascending: true },
+    // A cash tin marked "use in both" belongs on this page from either side.
+    includeShared: true,
   });
 
   /* Every non-cash account is a possible other side of a withdrawal. */
@@ -43,6 +45,7 @@ export function useCash({ from = null, to = null, limit = 200 } = {}) {
     select: 'id, name, type, current_balance, currency, workspace_id',
     filters: useMemo(() => ({ is_active: true }), []),
     orderBy: { column: 'name', ascending: true },
+    includeShared: true,
   });
 
   const stats = useMemo(() => {

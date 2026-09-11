@@ -60,12 +60,23 @@ export function WorkspaceProvider({ children }) {
    *
    * RLS already limits rows to this user; this narrows them to the workspace
    * the user is actually looking at.
+   *
+   * `includeShared` widens the filter to rows with a NULL workspace_id — the
+   * "use in both" accounts, contacts and categories. They belong to Personal
+   * and Business alike, so every scope has to see them or a shared bank
+   * account would vanish the moment you switched sides.
    */
   const scopeQuery = useCallback(
-    (query, column = 'workspace_id') => {
+    (query, column = 'workspace_id', { includeShared = false } = {}) => {
       if (!scopeIds.length) {
         // No workspaces resolved yet — match nothing rather than everything.
-        return query.in(column, ['00000000-0000-0000-0000-000000000000']);
+        // Shared rows still belong to this user, so they stay visible.
+        return includeShared
+          ? query.is(column, null)
+          : query.in(column, ['00000000-0000-0000-0000-000000000000']);
+      }
+      if (includeShared) {
+        return query.or(`${column}.in.(${scopeIds.join(',')}),${column}.is.null`);
       }
       if (scopeIds.length === 1) return query.eq(column, scopeIds[0]);
       return query.in(column, scopeIds);
@@ -76,6 +87,8 @@ export function WorkspaceProvider({ children }) {
   /** Resolves a workspace id back to its label — used by row badges. */
   const workspaceLabel = useCallback(
     (id) => {
+      // NULL is not "missing" here, it is the shared marker.
+      if (id === null || id === undefined) return 'Both';
       const ws = workspaces.find((w) => w.id === id);
       if (!ws) return null;
       return ws.type === 'business' ? 'Business' : 'Personal';
@@ -84,7 +97,10 @@ export function WorkspaceProvider({ children }) {
   );
 
   const workspaceType = useCallback(
-    (id) => workspaces.find((w) => w.id === id)?.type ?? null,
+    (id) => {
+      if (id === null || id === undefined) return 'shared';
+      return workspaces.find((w) => w.id === id)?.type ?? null;
+    },
     [workspaces],
   );
 

@@ -60,7 +60,9 @@ function CashCard({ account, onWithdraw, onSpend, showWorkspace, workspaceType }
             <p className="mt-0.5 text-[11.5px] text-ink-muted">Physical money</p>
           </div>
         </div>
-        {showWorkspace && <WorkspaceBadge type={workspaceType(account.workspace_id)} />}
+        {(showWorkspace || account.workspace_id === null) && (
+          <WorkspaceBadge type={workspaceType(account.workspace_id)} />
+        )}
       </div>
 
       <p className="eyebrow mb-1.5">In hand</p>

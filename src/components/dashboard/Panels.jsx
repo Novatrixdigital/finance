@@ -133,8 +133,8 @@ export function UpcomingPayments({ rows = [], loading }) {
           }
         />
       ) : (
-        <div className="-mx-2 overflow-x-auto">
-          <table className="w-full min-w-[30rem]">
+        <div className="-mx-2 sm:overflow-x-auto">
+          <table className="table-stack w-full sm:min-w-[30rem]">
             <thead>
               <tr>
                 <th className="t-head !px-2">Name</th>
@@ -150,13 +150,13 @@ export function UpcomingPayments({ rows = [], loading }) {
 
                 return (
                   <tr key={p.id} className="t-row cursor-pointer" onClick={() => navigate('/payments')}>
-                    <td className="t-cell !px-2">
+                    <td className="t-cell !px-2" data-primary>
                       <p className="truncate font-medium">{p.name}</p>
                       {p.contact?.name && (
                         <p className="mt-0.5 truncate text-[11.5px] text-ink-muted">{p.contact.name}</p>
                       )}
                     </td>
-                    <td className="t-cell !px-2">
+                    <td className="t-cell !px-2" data-label="Due">
                       <p className="text-[13px] text-ink-dim">{formatDate(p.due_date)}</p>
                       <p
                         className={cx(
@@ -171,8 +171,10 @@ export function UpcomingPayments({ rows = [], loading }) {
                             : `in ${days}d`}
                       </p>
                     </td>
-                    <td className="t-cell !px-2 text-right font-semibold tnum">{formatMoney(p.amount)}</td>
-                    <td className="t-cell !px-2 text-right">
+                    <td className="t-cell !px-2 text-right font-semibold tnum" data-label="Amount">
+                      {formatMoney(p.amount)}
+                    </td>
+                    <td className="t-cell !px-2 text-right" data-label="Status">
                       <Badge className={status.className} dot>
                         {status.label}
                       </Badge>

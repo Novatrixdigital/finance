@@ -173,7 +173,7 @@ export default function Payments() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[52rem]">
+            <table className="table-stack w-full sm:min-w-[52rem]">
               <thead className="bg-surface/50">
                 <tr>
                   <th className="t-head">Name</th>
@@ -193,7 +193,7 @@ export default function Payments() {
 
                   return (
                     <tr key={p.id} className="t-row group">
-                      <td className="t-cell">
+                      <td className="t-cell" data-primary>
                         <div className="flex items-center gap-2">
                           <span
                             className={cx(
@@ -220,9 +220,11 @@ export default function Payments() {
                         </div>
                       </td>
 
-                      <td className="t-cell text-[13px] text-ink-dim">{p.contact?.name || '—'}</td>
+                      <td className="t-cell text-[13px] text-ink-dim" data-label="Contact">
+                        {p.contact?.name || '—'}
+                      </td>
 
-                      <td className="t-cell">
+                      <td className="t-cell" data-label="Due">
                         <p className="text-[13px] text-ink-dim">{formatDate(p.due_date)}</p>
                         {!settled && (
                           <p
@@ -237,6 +239,7 @@ export default function Payments() {
                       </td>
 
                       <td
+                        data-label="Amount"
                         className={cx(
                           't-cell text-right font-semibold tnum',
                           p.direction === 'incoming' ? 'text-accent' : 'text-ink',
@@ -246,13 +249,13 @@ export default function Payments() {
                         {formatMoney(p.amount)}
                       </td>
 
-                      <td className="t-cell">
+                      <td className="t-cell" data-label="Status">
                         <Badge className={status.className} dot>
                           {status.label}
                         </Badge>
                       </td>
 
-                      <td className="t-cell text-right">
+                      <td className="t-cell text-right" data-actions>
                         <div className="flex items-center justify-end gap-1">
                           {!settled && (
                             <button

@@ -69,8 +69,12 @@ export function CommandPalette({ open, onClose }) {
                 .ilike('invoice_number', like)
                 .limit(4),
             ),
+            // Shared contacts and accounts belong in search from either
+            // workspace, same as they do in the pickers.
             scopeQuery(
               supabase.from('contacts').select('id, name, company, type').ilike('name', like).limit(4),
+              'workspace_id',
+              { includeShared: true },
             ),
             scopeQuery(
               supabase
@@ -78,6 +82,8 @@ export function CommandPalette({ open, onClose }) {
                 .select('id, name, current_balance, type')
                 .ilike('name', like)
                 .limit(4),
+              'workspace_id',
+              { includeShared: true },
             ),
             scopeQuery(
               supabase

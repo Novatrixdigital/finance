@@ -24,6 +24,10 @@ export function useCollection(table, options = {}) {
     limit,
     enabled = true,
     scoped = true,
+    // Accounts, contacts and categories may be marked "use in both", which is
+    // stored as a NULL workspace_id. Those tables opt in here so a shared row
+    // shows up in Personal, in Business and in Combined.
+    includeShared = false,
   } = options;
 
   const [rows, setRows] = useState([]);
@@ -57,7 +61,7 @@ export function useCollection(table, options = {}) {
 
     try {
       let query = supabase.from(table).select(select);
-      if (scoped) query = scopeQuery(query);
+      if (scoped) query = scopeQuery(query, 'workspace_id', { includeShared });
 
       const parsed = filterKey ? JSON.parse(filterKey) : null;
       if (parsed) {
@@ -88,7 +92,7 @@ export function useCollection(table, options = {}) {
     // orderBy/select are literals at each call site; filterKey + scopeKey carry
     // everything that actually changes at runtime.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [table, select, filterKey, scopeKey, limit, enabled, user, scoped, scopeQuery]);
+  }, [table, select, filterKey, scopeKey, limit, enabled, user, scoped, includeShared, scopeQuery]);
 
   useEffect(() => {
     fetchRows();
@@ -100,8 +104,16 @@ export function useCollection(table, options = {}) {
     async (payload, { silent = false } = {}) => {
       if (!user) return { error: 'Not signed in.' };
 
-      const workspaceId = payload.workspace_id || writeWorkspace?.id;
-      if (scoped && !workspaceId) {
+      // A deliberate null means "shared by both workspaces" and must survive.
+      // `||` folded it back to Personal, which quietly un-shared the record.
+      const wantsShared =
+        includeShared &&
+        Object.prototype.hasOwnProperty.call(payload, 'workspace_id') &&
+        payload.workspace_id === null;
+
+      const workspaceId = wantsShared ? null : payload.workspace_id || writeWorkspace?.id;
+
+      if (scoped && !wantsShared && !workspaceId) {
         return { error: 'No workspace selected. Choose Personal or Business first.' };
       }
 
@@ -119,7 +131,7 @@ export function useCollection(table, options = {}) {
       if (mounted.current) setRows((prev) => [data, ...prev]);
       return { data };
     },
-    [user, writeWorkspace, table, select, scoped, toast],
+    [user, writeWorkspace, table, select, scoped, includeShared, toast],
   );
 
   const update = useCallback(

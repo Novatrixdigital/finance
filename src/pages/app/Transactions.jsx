@@ -219,7 +219,7 @@ export default function Transactions() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[54rem]">
+            <table className="table-stack w-full sm:min-w-[54rem]">
               <thead className="bg-surface/50">
                 <tr>
                   <th className="t-head">Description</th>
@@ -238,7 +238,7 @@ export default function Transactions() {
 
                   return (
                     <tr key={t.id} className="t-row group">
-                      <td className="t-cell">
+                      <td className="t-cell" data-primary>
                         <div className="flex items-center gap-3">
                           <span className={cx('icon-tile h-9 w-9', meta.className)}>
                             <Icon size={14} strokeWidth={2.1} />
@@ -257,7 +257,7 @@ export default function Transactions() {
                         </div>
                       </td>
 
-                      <td className="t-cell">
+                      <td className="t-cell" data-label="Category">
                         {t.category?.name ? (
                           <span className="inline-flex items-center gap-2 text-[13px] text-ink-dim">
                             <span
@@ -271,9 +271,11 @@ export default function Transactions() {
                         )}
                       </td>
 
-                      <td className="t-cell text-[13px] text-ink-dim">{t.account?.name || '—'}</td>
+                      <td className="t-cell text-[13px] text-ink-dim" data-label="Account">
+                        {t.account?.name || '—'}
+                      </td>
 
-                      <td className="t-cell">
+                      <td className="t-cell" data-label="Date">
                         <p className="text-[13px] text-ink-dim">{formatDate(t.txn_date)}</p>
                         {t.status !== 'completed' && (
                           <Badge tone="warning" className="mt-1">
@@ -283,6 +285,7 @@ export default function Transactions() {
                       </td>
 
                       <td
+                        data-label="Amount"
                         className={cx(
                           't-cell text-right font-semibold tnum',
                           income ? 'text-accent' : t.type === 'expense' ? 'text-ink' : 'text-ink-dim',
@@ -292,7 +295,7 @@ export default function Transactions() {
                         {formatMoney(t.amount)}
                       </td>
 
-                      <td className="t-cell text-right">
+                      <td className="t-cell text-right" data-actions>
                         <div className="flex items-center justify-end gap-1 opacity-0 transition-opacity duration-200 group-hover:opacity-100 focus-within:opacity-100">
                           <button
                             type="button"

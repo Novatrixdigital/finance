@@ -54,8 +54,13 @@ export function useDashboard() {
     const n = (v) => Number(v ?? 0);
     return {
       totalBalance: n(s.total_balance),
+      // These three are reported across every workspace, not just the one in
+      // scope, so a row labelled "Business" shows business money even while
+      // you are looking at Personal.
       personalBalance: n(s.personal_balance),
       businessBalance: n(s.business_balance),
+      sharedBalance: n(s.shared_balance),
+      hasShared: Boolean(s.has_shared),
       netWorth: n(s.net_worth),
       netWorthGrowth: n(s.net_worth_growth),
       income: n(s.income_month),

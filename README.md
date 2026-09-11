@@ -86,6 +86,8 @@ Money always renders with `.tnum` (tabular numerals) so columns align.
 │   └── logo.svg                Favicon / brand mark
 ├── supabase/
 │   ├── novatrix_complete.sql   THE WHOLE DATABASE — run this one file
+│   ├── migration_002_…sql      Cash system · one primary account · payments→ledger
+│   ├── migration_003_…sql      Shared accounts · subscription automation · reminders
 │   ├── create_account.sql      Optional: provision the owner account
 │   └── functions/
 │       └── send-reminders/     Edge Function — Resend email delivery
@@ -138,6 +140,29 @@ cp .env.example .env
    select count(*) from information_schema.tables where table_schema = 'public';  -- 12
    select tablename, rowsecurity from pg_tables where schemaname = 'public';      -- all true
    ```
+
+2b. **Run the migrations, in order**, in the same SQL editor:
+
+    | File | What it changes |
+    | --- | --- |
+    | `migration_002_cash_and_fixes.sql` | Cash accounts, exactly one primary account, paid payments reach the ledger |
+    | `migration_003_shared_and_automation.sql` | Accounts/contacts usable in **both** workspaces, subscriptions mirror onto Recurring, reminders for payments · invoices · goals · budgets |
+
+    Both are idempotent and additive — no transaction, invoice, payment or balance
+    is rewritten. Migration 003 opens with a `§0` block that adds an enum label and
+    sits outside the transaction on purpose; if your client wraps the whole script in
+    one transaction and objects, run `§0` on its own first, then the rest.
+
+    Verify 003 landed:
+
+    ```sql
+    -- accounts may now be shared (NULL workspace = both)
+    select is_nullable from information_schema.columns
+     where table_name = 'accounts' and column_name = 'workspace_id';   -- YES
+
+    -- every non-lifetime subscription has exactly one mirror
+    select count(*) from public.recurring_transactions where subscription_id is not null;
+    ```
 
 3. **Settings → API** → copy the Project URL and the `anon` / publishable key into `.env`:
 
@@ -269,6 +294,62 @@ client filter is a convenience; RLS is what actually enforces isolation.
 
 Invoices and Contacts are hidden in Personal mode by design — those pages offer a switch to
 Business instead of showing an empty screen.
+
+### 6.1 · One account used by both — "use in both"
+
+Most people run a single bank account for personal spending and for the business. Modelling
+that as two rows gives you two balances that drift apart and a Combined total that counts the
+same money twice, so instead an **account or contact can belong to both**: `workspace_id` is
+`NULL`, which is the convention categories have always used.
+
+| | Personal view | Business view | Combined |
+| --- | --- | --- | --- |
+| Personal account | ✅ | — | ✅ |
+| Business account | — | ✅ | ✅ |
+| **Both** account | ✅ | ✅ | ✅ **counted once** |
+
+Pick **Both — Personal & Business** in the Belongs-to field on the Account or Contact form.
+Rows carry a blue `BOTH` badge, and the Net Worth card grows a third *Shared by both* line so
+Personal + Business + Shared still reconciles to the total rather than quietly overstating
+one side.
+
+What is *not* shared, on purpose: transactions, invoices, payments, budgets and goals stay
+owned by one workspace. Those are real financial events, and they have to land on one side of
+the books for reporting and tax to mean anything. Only the containers you pick *from* are
+shared — so a Business expense paid from the shared account is still a Business expense.
+
+Client side this is `scopeQuery(query, column, { includeShared: true })` and the matching
+`includeShared` option on `useCollection`; server side it is `in_scope(workspace_id, ids)`.
+
+### 6.2 · What gets created for you
+
+Adding one record now sets up everything that record implies, instead of leaving you to type
+the same thing into three pages:
+
+| You add | Also created |
+| --- | --- |
+| **Subscription** | A reminder before each renewal (plus a trial-ending warning), **and** a linked row on Recurring |
+| **Payment** | A reminder on its due date, and an overdue nudge if it passes |
+| **Invoice** | A due-soon reminder and an overdue reminder |
+| **Goal** | A reminder as the target date approaches, plus a monthly contribution nudge |
+| **Budget** | An alert when you cross your threshold, and again at 100% |
+
+These are database triggers, so they fire on save — not on the next page load, and not only
+when the nightly job happens to run.
+
+> **Only one thing ever posts to the ledger.** A subscription that mirrors onto Recurring
+> would be charged twice if both halves posted, so the subscription owns the posting and the
+> mirror is the visible schedule. Two independent guards enforce it: the mirror is forced to
+> `auto_post = false` on every sync, and `run_due_recurring()` skips any row carrying a
+> `subscription_id` outright. Mirrors are read-only on the Recurring page — they show a
+> **Manage** link back to the subscription rather than a second set of controls that could
+> disagree with it.
+
+Reminders are also created **as soon as the record exists**, anywhere in the next 400 days,
+with `remind_at` set to when the email should actually leave. Previously a subscription
+renewing in 30 days produced nothing visible for 27 of them, which reads as "it did not
+work". Nothing is emailed any earlier than before — `pending_reminder_batch` still only picks
+up rows whose `remind_at` has arrived.
 
 ---
 
@@ -517,10 +598,21 @@ Add `finance.novatrixdigital.in` under the project's **Settings → Domains**. I
 
 | Breakpoint | Layout |
 | --- | --- |
-| `< 640px` | Single column, bottom nav with a raised lime **+**, summary cards scroll horizontally, modals become bottom sheets |
-| `640 – 1024px` | Two-column Bento, sidebar becomes a drawer |
-| `1024 – 1280px` | Fixed sidebar, three-column summary grid |
-| `> 1280px` | Full experience — hero beside the right rail, five-column summary, three-column Bento |
+| `< 640px` | Single column, bottom nav with a raised lime **+**, summary cards two-across, data tables collapse into one card per row, modals become bottom sheets |
+| `640 – 1024px` | Two-column Bento, sidebar becomes a drawer, tables return |
+| `1024 – 1536px` | Fixed sidebar, three-column summary grid |
+| `> 1536px` | Full experience — hero beside the right rail, six-column summary, three-column Bento |
+
+**Nothing is hidden to make it fit.** Two rules carry that:
+
+- Wide tables (Transactions, Invoices, Payments, and the dashboard payments panel)
+  use `.table-stack`. Below 640px each row becomes a labelled card, so the amount,
+  the status and the row actions are on screen instead of parked off the right edge
+  where a horizontal scroll never reaches them.
+- Figures are fluid (`text-figure-fluid`) and are never truncated. The six-across
+  stat row used to clip a full rupee amount to its first few digits on a laptop;
+  it now shrinks the type and, failing that, wraps — it does not drop digits.
+  Six-across waits for `2xl`, where the cards are genuinely wide enough for it.
 
 The mobile "More" sheet carries the rest of the navigation plus the workspace and theme switches.
 

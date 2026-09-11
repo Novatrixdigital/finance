@@ -76,10 +76,15 @@ export function HeroSection({ stats, transactions, trend, onViewInsights }) {
 
         {/* ── Product visual ──────────────────────────────────────────────── */}
         <div className="animate-fade-in [animation-delay:120ms]">
+          {/* The two screens are labelled PERSONAL and BUSINESS, so each is
+              fed its own figure. It used to be handed the scope total, which
+              meant the Personal screen printed the business balance whenever
+              you were in Business or Combined. */}
           <PhoneVisual
-            totalBalance={stats.totalBalance}
-            growth={stats.netWorthGrowth}
+            personal={stats.personalBalance}
             business={stats.businessBalance}
+            shared={stats.sharedBalance}
+            growth={stats.netWorthGrowth}
             transactions={transactions}
             trend={trend}
           />

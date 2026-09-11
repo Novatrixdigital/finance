@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Eye, EyeOff, TrendingUp, TrendingDown, ChevronRight, User, Briefcase } from 'lucide-react';
+import { Eye, EyeOff, TrendingUp, TrendingDown, ChevronRight, User, Briefcase, Layers } from 'lucide-react';
 import { Card } from '@/components/ui';
 import { BarSpark } from '@/components/brand/WaveViz';
 import { useWorkspace } from '@/context/WorkspaceContext';
@@ -26,13 +26,28 @@ export function NetWorthCard({ stats, trend = [] }) {
 
   const mask = (value) => (hidden ? '••••••' : formatMoney(value));
 
+  // Always the real figures, whichever scope is active — these rows are
+  // labelled Personal and Business, so they have to mean it.
   const rows = [
     { id: SCOPES.PERSONAL, label: 'Personal', Icon: User, value: stats.personalBalance },
     { id: SCOPES.BUSINESS, label: 'Business', Icon: Briefcase, value: stats.businessBalance },
   ];
 
+  // Shared accounts sit in neither column, so they get their own row rather
+  // than being folded into one side and quietly overstating it.
+  if (stats.hasShared) {
+    rows.push({
+      id: 'shared',
+      label: 'Shared by both',
+      Icon: Layers,
+      value: stats.sharedBalance,
+    });
+  }
+
   const openScope = (scopeId) => {
-    setScope(scopeId);
+    // "Shared by both" has no scope of its own — Combined is where it all adds
+    // up, so that is where the row leads.
+    setScope(scopeId === 'shared' ? SCOPES.COMBINED : scopeId);
     navigate('/accounts');
   };
 

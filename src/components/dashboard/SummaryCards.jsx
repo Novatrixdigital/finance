@@ -57,7 +57,9 @@ function StatCard({ label, sub, value, delta, deltaLabel, Icon, tone = 'neutral'
         </span>
       </div>
 
-      <p className="w-full truncate text-figure-md tnum text-ink">{formatMoney(value)}</p>
+      {/* Fluid size, and no truncate: a balance that does not fit should
+          shrink, never lose its last digits. */}
+      <p className="w-full text-figure-fluid tnum text-ink">{formatMoney(value)}</p>
 
       {delta !== undefined && delta !== null ? (
         <p
@@ -147,13 +149,14 @@ export function SummaryCards({ stats }) {
   ];
 
   return (
-    <div className="-mx-4 overflow-x-auto px-4 no-scrollbar sm:mx-0 sm:overflow-visible sm:px-0">
-      <div className="stagger grid min-w-[50rem] grid-cols-6 gap-4 sm:min-w-0 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-        {cards.map(({ key, ...card }) => (
-          // React warns when the key prop travels inside a spread.
-          <StatCard key={key} {...card} />
-        ))}
-      </div>
+    // No sideways scroll strip any more: on a phone the six cards stack two
+    // across so every figure is on screen, and six-across waits for 2xl,
+    // where the cards are finally wide enough for a full rupee amount.
+    <div className="stagger grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 2xl:grid-cols-6">
+      {cards.map(({ key, ...card }) => (
+        // React warns when the key prop travels inside a spread.
+        <StatCard key={key} {...card} />
+      ))}
     </div>
   );
 }

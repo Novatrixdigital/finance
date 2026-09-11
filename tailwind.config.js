@@ -67,6 +67,13 @@ export default {
         'figure-sm': ['1.5rem', { lineHeight: '1.1', letterSpacing: '-0.02em', fontWeight: '700' }],
         'figure-md': ['2rem', { lineHeight: '1.05', letterSpacing: '-0.03em', fontWeight: '700' }],
         'figure-lg': ['2.75rem', { lineHeight: '1', letterSpacing: '-0.035em', fontWeight: '700' }],
+        // Fluid numeral for cards that get narrow on laptops. A fixed 2rem
+        // figure truncated "₹ 59,968.03" to "₹ 59,96…" in the six-across stat
+        // row; this shrinks with the viewport instead of hiding digits.
+        'figure-fluid': [
+          'clamp(1.35rem, 1.65vw + 0.55rem, 2rem)',
+          { lineHeight: '1.05', letterSpacing: '-0.03em', fontWeight: '700' },
+        ],
         // Micro labels
         micro: ['0.6875rem', { lineHeight: '1.2', letterSpacing: '0.08em', fontWeight: '600' }],
       },

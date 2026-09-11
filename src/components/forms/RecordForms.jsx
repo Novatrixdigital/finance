@@ -13,6 +13,8 @@ import {
   FREQUENCIES,
   PAYMENT_METHODS,
   CURRENCIES,
+  SHARED_WORKSPACE,
+  SHARED_LABEL,
 } from '@/lib/constants';
 import { toISODate } from '@/lib/format';
 import { GOAL_ICONS, CATEGORY_ICONS } from '@/lib/icons';
@@ -41,7 +43,15 @@ function useRecordForm({ open, record, table, initial, onClose, successText }) {
 
   useEffect(() => {
     if (!open) return;
-    setForm(record ? { ...initial, ...record } : initial);
+    if (record) {
+      const seeded = { ...initial, ...record };
+      // A stored NULL workspace means "shared". Carry it back as the sentinel
+      // so the picker re-opens on "Both" instead of looking unset.
+      if (record.workspace_id === null) seeded.workspace_id = SHARED_WORKSPACE;
+      setForm(seeded);
+    } else {
+      setForm(initial);
+    }
     setErrors({});
     // `initial` is rebuilt on every render by design — only re-seed on open.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -63,10 +73,18 @@ function useRecordForm({ open, record, table, initial, onClose, successText }) {
     if (Object.keys(found).length || !user) return;
 
     setSaving(true);
+
+    // `__shared__` is the sentinel a <select> can carry; the column stores
+    // NULL. Resolve it here so no individual form has to remember to.
+    const chosen =
+      form.workspace_id === SHARED_WORKSPACE
+        ? null
+        : form.workspace_id || writeWorkspace?.id;
+
     // The workspace default comes first so a form that returns its own
     // `workspace_id` — categories use null to mean "shared" — can override it.
     const payload = {
-      workspace_id: form.workspace_id || writeWorkspace?.id,
+      workspace_id: chosen,
       ...buildPayload(form),
       user_id: user.id,
     };
@@ -103,18 +121,33 @@ function Footer({ onClose, onSave, saving, isEdit, label }) {
   );
 }
 
-/** Workspace picker, shown only when Combined mode leaves the target ambiguous. */
-function WorkspaceField({ value, onChange, error }) {
+/**
+ * Workspace picker.
+ *
+ * Normally it only appears in Combined mode, where the target is genuinely
+ * ambiguous. `allowShared` changes that: a record that can be used in both
+ * workspaces has to offer that choice from Personal and Business too, or the
+ * only way to create a shared account would be to switch to Combined first.
+ */
+function WorkspaceField({ value, onChange, error, allowShared = false, hint }) {
   const { isCombined, workspaces } = useWorkspace();
-  if (!isCombined) return null;
+  if (!isCombined && !allowShared) return null;
+
   return (
-    <Select label="Workspace" value={value || ''} onChange={onChange} error={error}>
-      <option value="">Select workspace…</option>
+    <Select
+      label="Belongs to"
+      value={value ?? ''}
+      onChange={onChange}
+      error={error}
+      hint={hint}
+    >
+      {isCombined && <option value="">Select workspace…</option>}
       {workspaces.map((w) => (
         <option key={w.id} value={w.id}>
           {w.name}
         </option>
       ))}
+      {allowShared && <option value={SHARED_WORKSPACE}>{SHARED_LABEL}</option>}
     </Select>
   );
 }
@@ -185,7 +218,13 @@ export function AccountForm({ open, onClose, record }) {
       footer={<Footer onClose={onClose} onSave={onSave} saving={saving} isEdit={isEdit} label="Add account" />}
     >
       <div className="space-y-5">
-        <WorkspaceField value={form.workspace_id} onChange={set('workspace_id')} error={errors.workspace_id} />
+        <WorkspaceField
+          value={form.workspace_id}
+          onChange={set('workspace_id')}
+          error={errors.workspace_id}
+          allowShared
+          hint="Choose Both if the same real account is used for personal and business."
+        />
 
         <Input label="Account name" value={form.name} onChange={set('name')} placeholder="HDFC Savings" error={errors.name} />
 
@@ -710,7 +749,13 @@ export function ContactForm({ open, onClose, record }) {
       footer={<Footer onClose={onClose} onSave={onSave} saving={saving} isEdit={isEdit} label="Add contact" />}
     >
       <div className="space-y-5">
-        <WorkspaceField value={form.workspace_id} onChange={set('workspace_id')} error={errors.workspace_id} />
+        <WorkspaceField
+          value={form.workspace_id}
+          onChange={set('workspace_id')}
+          error={errors.workspace_id}
+          allowShared
+          hint="Choose Both if you use this contact for personal and business alike."
+        />
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Input label="Name" value={form.name} onChange={set('name')} placeholder="ABC Tech Solutions" error={errors.name} />

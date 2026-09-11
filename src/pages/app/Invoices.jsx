@@ -211,7 +211,7 @@ export default function Invoices() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[56rem]">
+            <table className="table-stack w-full sm:min-w-[56rem]">
               <thead className="bg-surface/50">
                 <tr>
                   <th className="t-head">Invoice</th>
@@ -231,21 +231,21 @@ export default function Invoices() {
 
                   return (
                     <tr key={inv.id} className="t-row group">
-                      <td className="t-cell">
+                      <td className="t-cell" data-primary>
                         <p className="font-mono text-[13px] font-medium text-ink">{inv.invoice_number}</p>
                         <p className="mt-0.5 text-[11.5px] text-ink-muted">
                           Issued {formatDate(inv.issue_date)}
                         </p>
                       </td>
 
-                      <td className="t-cell">
+                      <td className="t-cell" data-label="Customer">
                         <p className="truncate text-[13px] text-ink">{inv.contact?.name || '—'}</p>
                         {inv.contact?.company && (
                           <p className="mt-0.5 truncate text-[11.5px] text-ink-muted">{inv.contact.company}</p>
                         )}
                       </td>
 
-                      <td className="t-cell">
+                      <td className="t-cell" data-label="Due">
                         <p className="text-[13px] text-ink-dim">{formatDate(inv.due_date)}</p>
                         {!settled && (
                           <p className={cx('mt-0.5 text-[11px]', days < 0 ? 'text-negative' : 'text-ink-muted')}>
@@ -254,9 +254,12 @@ export default function Invoices() {
                         )}
                       </td>
 
-                      <td className="t-cell text-right tnum text-ink-dim">{formatMoney(inv.total)}</td>
+                      <td className="t-cell text-right tnum text-ink-dim" data-label="Total">
+                        {formatMoney(inv.total)}
+                      </td>
 
                       <td
+                        data-label="Balance"
                         className={cx(
                           't-cell text-right font-semibold tnum',
                           Number(inv.balance_due) > 0 ? 'text-ink' : 'text-accent',
@@ -265,14 +268,14 @@ export default function Invoices() {
                         {formatMoney(inv.balance_due)}
                       </td>
 
-                      <td className="t-cell">
+                      <td className="t-cell" data-label="Status">
                         <Badge className={status.className} dot>
                           {status.label}
                         </Badge>
                       </td>
 
-                      <td className="t-cell text-right">
-                        <div className="flex items-center justify-end gap-1">
+                      <td className="t-cell text-right" data-actions>
+                        <div className="flex flex-wrap items-center justify-end gap-1">
                           {inv.status === 'draft' && (
                             <button
                               type="button"

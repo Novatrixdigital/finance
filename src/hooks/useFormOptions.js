@@ -19,8 +19,16 @@ export function useFormOptions(workspaceId) {
   const [contacts, setContacts] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // Forms carry `__shared__` in the picker to mean "both workspaces", and a
+  // couple of them seed workspace_id before it resolves. Neither is a usable
+  // filter value — PostgREST would reject the malformed uuid — so anything
+  // that is not a real id falls back to the active scope.
+  const isRealId = (v) =>
+    typeof v === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+
   const ids = useMemo(
-    () => (workspaceId ? [workspaceId] : scopeIds),
+    () => (isRealId(workspaceId) ? [workspaceId] : scopeIds),
     [workspaceId, scopeIds],
   );
   const idKey = useMemo(() => ids.join(','), [ids]);
@@ -36,25 +44,30 @@ export function useFormOptions(workspaceId) {
 
     setLoading(true);
 
+    // workspace_id IS NULL means "use in both", so accounts, categories and
+    // contacts all widen the filter the same way. Without this, a bank account
+    // marked Both would disappear from the picker as soon as you were writing
+    // a Business transaction — which is precisely what sharing is for.
+    const orShared = `workspace_id.in.(${ids.join(',')}),workspace_id.is.null`;
+
     Promise.all([
       supabase
         .from('accounts')
         .select('id, name, type, current_balance, workspace_id, currency')
-        .in('workspace_id', ids)
+        .or(orShared)
         .eq('is_active', true)
         .order('is_primary', { ascending: false })
         .order('name'),
-      // workspace_id IS NULL means "shared across both workspaces".
       supabase
         .from('categories')
         .select('id, name, kind, icon, color, workspace_id')
-        .or(`workspace_id.in.(${ids.join(',')}),workspace_id.is.null`)
+        .or(orShared)
         .order('sort_order')
         .order('name'),
       supabase
         .from('contacts')
         .select('id, name, type, company, workspace_id')
-        .in('workspace_id', ids)
+        .or(orShared)
         .eq('is_active', true)
         .order('name'),
     ])

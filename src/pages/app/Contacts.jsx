@@ -34,6 +34,7 @@ export default function Contacts() {
     select: '*',
     orderBy: { column: 'name', ascending: true },
     enabled: !isPersonal,
+    includeShared: true,
   });
 
   useEffect(() => {

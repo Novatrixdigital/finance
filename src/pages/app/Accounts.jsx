@@ -21,6 +21,9 @@ export default function Accounts() {
   const { rows, loading, remove, refresh } = useCollection('accounts', {
     select: '*',
     orderBy: { column: 'is_primary', ascending: false },
+    // Accounts marked "use in both" carry a NULL workspace and belong on this
+    // list whichever side you are viewing.
+    includeShared: true,
   });
 
   useEffect(() => {
@@ -188,7 +191,9 @@ export default function Accounts() {
 
                 <div className="mt-5 flex items-center justify-between gap-2 border-t border-hair-soft pt-4">
                   <div className="flex items-center gap-2">
-                    {isCombined && <WorkspaceBadge type={workspaceType(account.workspace_id)} />}
+                    {(isCombined || account.workspace_id === null) && (
+                      <WorkspaceBadge type={workspaceType(account.workspace_id)} />
+                    )}
                     {account.account_number && (
                       <span className="font-mono text-[11px] text-ink-muted">{account.account_number}</span>
                     )}

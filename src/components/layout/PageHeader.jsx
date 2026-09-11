@@ -44,13 +44,19 @@ export function PageHeader({ title, accent, subtitle, actions, children }) {
  * the fifth stat on a page — Accounts gained one when cash became its own
  * figure — dropped onto a row of its own and sat there looking orphaned.
  */
+/**
+ * Five and six figures used to go wide at `lg`, where a column is about
+ * 110px — narrower than "₹ 58,442.90" renders at 19px, so on a laptop the
+ * figures were being clipped to "₹ 58,44…". They now wait for 2xl and sit
+ * three-across in between, which is two tidy rows rather than one cut-off one.
+ */
 const STRIP_COLUMNS = {
   1: 'sm:grid-cols-1',
   2: 'sm:grid-cols-2',
   3: 'sm:grid-cols-3',
-  4: 'sm:grid-cols-4',
-  5: 'sm:grid-cols-3 lg:grid-cols-5',
-  6: 'sm:grid-cols-3 lg:grid-cols-6',
+  4: 'sm:grid-cols-2 lg:grid-cols-4',
+  5: 'sm:grid-cols-3 2xl:grid-cols-5',
+  6: 'sm:grid-cols-3 2xl:grid-cols-6',
 };
 
 export function StatStrip({ items }) {
@@ -61,9 +67,11 @@ export function StatStrip({ items }) {
       {items.map(({ label, value, tone, meta }) => (
         <div key={label} className="rounded-2xl border border-hair bg-card px-4 py-3.5">
           <p className="truncate text-[11.5px] text-ink-muted">{label}</p>
+          {/* No truncate: a figure that does not fit should wrap onto a
+              second line, never lose its last digits. */}
           <p
             className={cx(
-              'mt-1.5 truncate text-[19px] font-bold tracking-tight tnum',
+              'mt-1.5 break-words text-[17px] font-bold leading-tight tracking-tight tnum sm:text-[19px]',
               tone === 'lime' && 'text-accent',
               tone === 'negative' && 'text-negative',
               tone === 'warning' && 'text-warning',

@@ -13,6 +13,7 @@ import {
   CURRENCIES,
 } from '@/lib/constants';
 import { toISODate, formatMoney } from '@/lib/format';
+import { Sparkles } from 'lucide-react';
 import { icon as resolveIcon, cx } from '@/lib/utils';
 
 const blank = (workspaceId = '') => ({
@@ -161,8 +162,10 @@ export function SubscriptionForm({ open, onClose, record }) {
       return;
     }
 
-    // Refresh this user's reminder queue so the change takes effect tonight.
-    await supabase.rpc('generate_reminders').catch(() => {});
+    // The reminder queue and the mirrored recurring rule are both maintained
+    // by triggers on `subscriptions` now, so there is nothing to kick off from
+    // here. (The old call was `.catch()`-ed, which never fired anyway —
+    // supabase.rpc resolves with { error } rather than rejecting.)
 
     toast.success(isEdit ? 'Subscription updated.' : `${form.name.trim()} is now tracked.`);
     notifySaved();
@@ -303,6 +306,31 @@ export function SubscriptionForm({ open, onClose, record }) {
               </option>
             ))}
           </Select>
+        </div>
+
+        {/* What saving this will do, stated before it happens rather than
+            discovered afterwards on two other pages. */}
+        <div className="rounded-2xl border border-accent/20 bg-lime/[0.05] p-4">
+          <p className="mb-2 flex items-center gap-2 text-[13px] font-medium text-ink">
+            <Sparkles size={14} className="text-accent" />
+            Saved automatically to
+          </p>
+          <ul className="space-y-1 text-[11.5px] leading-relaxed text-ink-dim">
+            <li>
+              <span className="text-ink">Reminders</span> — a nudge before every renewal
+              {form.status === 'trial' ? ', plus one before the trial converts' : ''}.
+            </li>
+            <li>
+              <span className="text-ink">Recurring</span> — shown on the schedule as{' '}
+              {BILLING_CYCLES.find((c) => c.id === form.billing_cycle)?.label?.toLowerCase() ||
+                'monthly'}
+              .
+            </li>
+            <li className="text-ink-muted">
+              Only this subscription posts to the ledger, so the charge can never be
+              counted twice.
+            </li>
+          </ul>
         </div>
 
         {/* Reminders */}

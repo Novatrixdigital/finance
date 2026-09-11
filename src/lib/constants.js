@@ -25,6 +25,16 @@ export const SCOPE_LIST = [
   { id: SCOPES.COMBINED, label: 'Combined', icon: 'Layers', hint: 'Everything together' },
 ];
 
+/**
+ * "Use in both" — one account or contact serving Personal AND Business.
+ *
+ * Stored as workspace_id = NULL, the same way categories have always worked.
+ * A <select> cannot carry null as an option value, so the form uses this
+ * sentinel and converts it back to null on save.
+ */
+export const SHARED_WORKSPACE = '__shared__';
+export const SHARED_LABEL = 'Both — Personal & Business';
+
 /* ── Navigation ─────────────────────────────────────────────────────────── */
 
 export const NAV_ITEMS = [
@@ -185,6 +195,7 @@ export const REMINDER_KINDS = [
   { id: 'payment', label: 'Payment' },
   { id: 'invoice', label: 'Invoice' },
   { id: 'goal', label: 'Goal' },
+  { id: 'budget', label: 'Budget' },
 ];
 
 /* ── Chart palette ──────────────────────────────────────────────────────── */

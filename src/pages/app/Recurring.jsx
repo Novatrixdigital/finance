@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
-import { Plus, Pencil, Trash2, Repeat, Play, Pause, Zap } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Plus, Pencil, Trash2, Repeat, Play, Pause, Zap, RefreshCw, ArrowUpRight } from 'lucide-react';
 import { PageHeader, StatStrip } from '@/components/layout/PageHeader';
 import {
   Card,
@@ -21,6 +22,7 @@ import { cx, sumBy } from '@/lib/utils';
 
 export default function Recurring() {
   const { open, dirtyToken } = useModals();
+  const navigate = useNavigate();
   const { workspaceType, isCombined } = useWorkspace();
   const toast = useToast();
 
@@ -151,6 +153,10 @@ export default function Recurring() {
             const income = rule.type === 'income';
             const days = daysUntil(rule.next_run_date);
             const due = days <= 0 && rule.is_active;
+            // Rows mirrored from a subscription are read-only here: the
+            // subscription owns the schedule AND the ledger posting, so
+            // editing the copy would only ever drift out of step with it.
+            const fromSub = Boolean(rule.subscription_id);
 
             return (
               <Card
@@ -173,31 +179,48 @@ export default function Recurring() {
                         <p className="truncate text-[14px] font-semibold text-ink">{rule.name}</p>
                         {isCombined && <WorkspaceBadge type={workspaceType(rule.workspace_id)} />}
                       </div>
-                      <p className="mt-0.5 truncate text-[11.5px] text-ink-muted">
-                        {freqLabel(rule.frequency)}
-                        {rule.category?.name ? ` · ${rule.category.name}` : ''}
+                      <p className="mt-0.5 flex items-center gap-1.5 truncate text-[11.5px] text-ink-muted">
+                        {fromSub && (
+                          <RefreshCw size={11} className="shrink-0 text-accent" aria-hidden="true" />
+                        )}
+                        <span className="truncate">
+                          {fromSub ? 'From subscription · ' : ''}
+                          {freqLabel(rule.frequency)}
+                          {rule.category?.name ? ` · ${rule.category.name}` : ''}
+                        </span>
                       </p>
                     </div>
                   </div>
 
-                  <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                  {fromSub ? (
                     <button
                       type="button"
-                      onClick={() => open('recurring', { record: rule })}
-                      aria-label="Edit rule"
-                      className="rounded-lg p-1.5 text-ink-muted transition-colors hover:bg-hair hover:text-ink"
+                      onClick={() => navigate('/subscriptions')}
+                      className="inline-flex shrink-0 items-center gap-1 rounded-full border border-hair px-2.5 py-1 text-[11px] font-medium text-ink-muted transition-colors hover:border-accent/35 hover:text-accent"
                     >
-                      <Pencil size={13} />
+                      Manage
+                      <ArrowUpRight size={11} />
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirm(rule)}
-                      aria-label="Delete rule"
-                      className="rounded-lg p-1.5 text-ink-muted transition-colors hover:bg-negative/10 hover:text-negative"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
+                  ) : (
+                    <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                      <button
+                        type="button"
+                        onClick={() => open('recurring', { record: rule })}
+                        aria-label="Edit rule"
+                        className="rounded-lg p-1.5 text-ink-muted transition-colors hover:bg-hair hover:text-ink"
+                      >
+                        <Pencil size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirm(rule)}
+                        aria-label="Delete rule"
+                        className="rounded-lg p-1.5 text-ink-muted transition-colors hover:bg-negative/10 hover:text-negative"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <p className={cx('text-figure-sm tnum', income ? 'text-accent' : 'text-ink')}>
@@ -217,20 +240,25 @@ export default function Recurring() {
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => toggle(rule)}
-                    aria-label={rule.is_active ? 'Pause rule' : 'Resume rule'}
-                    className={cx(
-                      'inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11.5px] font-medium transition-colors',
-                      rule.is_active
-                        ? 'border-hair text-ink-dim hover:border-warning/40 hover:text-warning'
-                        : 'border-accent/30 bg-accent/10 text-accent hover:bg-accent/20',
-                    )}
-                  >
-                    {rule.is_active ? <Pause size={12} /> : <Play size={12} />}
-                    {rule.is_active ? 'Pause' : 'Resume'}
-                  </button>
+                  {/* A mirror has no pause of its own — pausing the
+                      subscription is what stops it, and offering a second
+                      switch here would just let the two disagree. */}
+                  {!fromSub && (
+                    <button
+                      type="button"
+                      onClick={() => toggle(rule)}
+                      aria-label={rule.is_active ? 'Pause rule' : 'Resume rule'}
+                      className={cx(
+                        'inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11.5px] font-medium transition-colors',
+                        rule.is_active
+                          ? 'border-hair text-ink-dim hover:border-warning/40 hover:text-warning'
+                          : 'border-accent/30 bg-accent/10 text-accent hover:bg-accent/20',
+                      )}
+                    >
+                      {rule.is_active ? <Pause size={12} /> : <Play size={12} />}
+                      {rule.is_active ? 'Pause' : 'Resume'}
+                    </button>
+                  )}
                 </div>
               </Card>
             );

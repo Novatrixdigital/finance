@@ -106,20 +106,34 @@ export function Badge({ children, className, tone, dot = false }) {
   );
 }
 
-/** Personal / Business pill shown on rows in Combined mode. */
+/**
+ * Personal / Business / Both pill.
+ *
+ * "Both" is its own state, not a missing one: a record with no workspace is
+ * shared by the two, and saying so is the whole point of the badge.
+ */
 export function WorkspaceBadge({ type }) {
   if (!type) return null;
-  const business = type === 'business' || type === 'Business';
+
+  const key = String(type).toLowerCase();
+  const style =
+    key === 'business'
+      ? 'border-accent/25 bg-accent/10 text-accent'
+      : key === 'shared' || key === 'both'
+        ? 'border-info/30 bg-info/10 text-info'
+        : 'border-hair-strong bg-hair text-ink-dim';
+
+  const label = key === 'business' ? 'Business' : key === 'shared' || key === 'both' ? 'Both' : 'Personal';
+
   return (
     <span
       className={cx(
         'inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em]',
-        business
-          ? 'border-accent/25 bg-accent/10 text-accent'
-          : 'border-hair-strong bg-hair text-ink-dim',
+        style,
       )}
+      title={label === 'Both' ? 'Used by Personal and Business' : undefined}
     >
-      {business ? 'Business' : 'Personal'}
+      {label}
     </span>
   );
 }
