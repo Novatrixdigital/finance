@@ -74,7 +74,7 @@ function StatCard({ label, sub, value, delta, deltaLabel, Icon, tone = 'neutral'
           {deltaLabel && <span className="font-normal text-ink-muted">{deltaLabel}</span>}
         </p>
       ) : (
-        <p className="mt-2.5 text-[12px] text-ink-muted">{meta}</p>
+        <p className="mt-2.5 text-[11.5px] leading-tight text-ink-muted truncate w-full">{meta}</p>
       )}
     </button>
   );
@@ -149,10 +149,7 @@ export function SummaryCards({ stats }) {
   ];
 
   return (
-    // No sideways scroll strip any more: on a phone the six cards stack two
-    // across so every figure is on screen, and six-across waits for 2xl,
-    // where the cards are finally wide enough for a full rupee amount.
-    <div className="stagger grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 2xl:grid-cols-6">
+    <div className="stagger grid grid-cols-2 gap-3.5 sm:grid-cols-3 xl:grid-cols-6">
       {cards.map(({ key, ...card }) => (
         // React warns when the key prop travels inside a spread.
         <StatCard key={key} {...card} />

@@ -16,8 +16,7 @@ import { cx, icon as resolveIcon } from '@/lib/utils';
  * the kind of small courtesy a finance product is judged on.
  */
 export function NetWorthCard({ stats, trend = [] }) {
-  const [hidden, setHidden] = useState(false);
-  const { setScope } = useWorkspace();
+  const { scope, setScope, hidden, setHidden, toggleHidden } = useWorkspace();
   const navigate = useNavigate();
 
   const growth = stats.netWorthGrowth;
@@ -26,23 +25,25 @@ export function NetWorthCard({ stats, trend = [] }) {
 
   const mask = (value) => (hidden ? '••••••' : formatMoney(value));
 
-  // Always the real figures, whichever scope is active — these rows are
-  // labelled Personal and Business, so they have to mean it.
-  const rows = [
+  const allRows = [
     { id: SCOPES.PERSONAL, label: 'Personal', Icon: User, value: stats.personalBalance },
     { id: SCOPES.BUSINESS, label: 'Business', Icon: Briefcase, value: stats.businessBalance },
   ];
 
-  // Shared accounts sit in neither column, so they get their own row rather
-  // than being folded into one side and quietly overstating it.
   if (stats.hasShared) {
-    rows.push({
+    allRows.push({
       id: 'shared',
       label: 'Shared by both',
       Icon: Layers,
       value: stats.sharedBalance,
     });
   }
+
+  const rows = allRows.filter((row) => {
+    if (scope === SCOPES.PERSONAL) return row.id === SCOPES.PERSONAL;
+    if (scope === SCOPES.BUSINESS) return row.id === SCOPES.BUSINESS;
+    return true;
+  });
 
   const openScope = (scopeId) => {
     // "Shared by both" has no scope of its own — Combined is where it all adds
@@ -57,7 +58,7 @@ export function NetWorthCard({ stats, trend = [] }) {
         <h3 className="text-[17px] font-semibold tracking-[-0.01em] text-ink">Your Net Worth</h3>
         <button
           type="button"
-          onClick={() => setHidden((v) => !v)}
+          onClick={toggleHidden}
           aria-label={hidden ? 'Show amounts' : 'Hide amounts'}
           className="rounded-lg p-1.5 text-ink-muted transition-colors hover:bg-hair hover:text-ink"
         >
@@ -134,7 +135,7 @@ export function QuickActions() {
     <Card>
       <h3 className="mb-5 text-[17px] font-semibold tracking-[-0.01em] text-ink">Quick Actions</h3>
 
-      <div className="grid grid-cols-4 gap-2.5">
+      <div className="grid grid-cols-4 gap-1.5 sm:gap-2.5">
         {QUICK_ACTIONS.map(({ id, label, icon: iconName, accent }) => {
           const Icon = resolveIcon(iconName);
           const [top, bottom] = label.split('\n');
@@ -145,7 +146,7 @@ export function QuickActions() {
               type="button"
               onClick={() => run(id)}
               className={cx(
-                'group flex flex-col items-center gap-2.5 rounded-2xl border px-2 py-4 transition-all duration-400 ease-premium',
+                'group flex flex-col items-center gap-2 sm:gap-2.5 rounded-2xl border px-1 sm:px-2 py-3 sm:py-4 transition-all duration-400 ease-premium',
                 accent
                   ? 'border-accent/35 bg-lime/[0.07] hover:bg-lime/[0.12]'
                   : 'border-hair bg-surface hover:border-accent/30 hover:bg-elevated',
@@ -153,7 +154,7 @@ export function QuickActions() {
             >
               <span
                 className={cx(
-                  'flex h-9 w-9 items-center justify-center rounded-xl transition-colors duration-300',
+                  'flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-xl transition-colors duration-300',
                   accent
                     ? 'bg-lime text-black'
                     : 'border border-hair bg-elevated text-ink-dim group-hover:text-accent',
@@ -161,7 +162,7 @@ export function QuickActions() {
               >
                 <Icon size={16} strokeWidth={2.2} />
               </span>
-              <span className="text-center text-[10.5px] font-medium leading-[1.3] text-ink-dim">
+              <span className="text-center text-[9.5px] xs:text-[10.5px] font-medium leading-[1.25] text-ink-dim">
                 {top}
                 <br />
                 {bottom}

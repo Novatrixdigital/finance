@@ -94,10 +94,8 @@ export default function Dashboard() {
     <div className="mx-auto max-w-[1560px] space-y-8">
       {isEmpty && <GetStartedCard />}
 
-      {/* ── HERO + RIGHT RAIL ─────────────────────────────────────────────
-          On wide screens the net worth card and quick actions sit beside the
-          hero as a true right rail; below xl they stack underneath. */}
-      <div className="grid grid-cols-1 gap-6 2xl:grid-cols-[minmax(0,1fr)_20rem]">
+      {/* ── HERO + RIGHT RAIL ───────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_20rem] 2xl:grid-cols-[minmax(0,1fr)_22rem]">
         <HeroSection
           stats={stats}
           transactions={transactions}
@@ -117,14 +115,14 @@ export default function Dashboard() {
       {/* ── BENTO GRID ────────────────────────────────────────────────────── */}
       <div ref={insightsRef} className="scroll-mt-24 space-y-6">
         {/* Row 1 — charts + recent activity */}
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-2 2xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)_20rem]">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-3">
           <CashFlowChart data={chart} loading={loading} />
           <ExpenseDonut data={donut} loading={loading} period={period} onPeriodChange={setPeriod} />
           <RecentTransactions rows={transactions} loading={loading} />
         </div>
 
         {/* Row 2 — obligations */}
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.6fr)_20rem]">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
           <UpcomingPayments rows={payments} loading={loading} />
           {/* self-start so the short quote does not stretch into a tall empty
               box beside the payments table — whitespace reads better here. */}

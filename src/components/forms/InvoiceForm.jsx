@@ -274,40 +274,42 @@ export function InvoiceForm({ open, onClose, record }) {
             {items.map((it) => (
               <div
                 key={it.key}
-                className="grid grid-cols-12 items-center gap-2 rounded-2xl border border-hair bg-surface p-2"
+                className="flex flex-col gap-2 rounded-2xl border border-hair bg-surface p-2.5 sm:grid sm:grid-cols-12 sm:items-center sm:gap-2 sm:p-2"
               >
                 <input
                   value={it.description}
                   onChange={(e) => setItem(it.key, 'description', e.target.value)}
                   placeholder="Description"
-                  className="col-span-12 rounded-xl bg-transparent px-3 py-2 text-[13px] text-ink outline-none placeholder:text-ink-muted sm:col-span-6"
+                  className="w-full rounded-xl bg-transparent px-3 py-2 text-[13px] text-ink outline-none placeholder:text-ink-muted sm:col-span-5"
                 />
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={it.quantity}
-                  onChange={(e) => setItem(it.key, 'quantity', e.target.value)}
-                  placeholder="Qty"
-                  className="tnum col-span-3 rounded-xl bg-transparent px-3 py-2 text-right text-[13px] text-ink outline-none sm:col-span-2"
-                />
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={it.rate}
-                  onChange={(e) => setItem(it.key, 'rate', e.target.value)}
-                  placeholder="Rate"
-                  className="tnum col-span-4 rounded-xl bg-transparent px-3 py-2 text-right text-[13px] text-ink outline-none sm:col-span-2"
-                />
-                <div className="col-span-4 pr-1 text-right text-[13px] font-semibold tnum text-ink sm:col-span-1">
-                  {formatMoney((Number(it.quantity) || 0) * (Number(it.rate) || 0), { withSymbol: false })}
+                <div className="flex items-center gap-2 sm:col-span-6">
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={it.quantity}
+                    onChange={(e) => setItem(it.key, 'quantity', e.target.value)}
+                    placeholder="Qty"
+                    className="tnum w-20 flex-1 sm:w-auto rounded-xl border border-hair/40 sm:border-none bg-transparent px-3 py-2 text-right text-[13px] text-ink outline-none"
+                  />
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={it.rate}
+                    onChange={(e) => setItem(it.key, 'rate', e.target.value)}
+                    placeholder="Rate"
+                    className="tnum w-24 flex-1 sm:w-auto rounded-xl border border-hair/40 sm:border-none bg-transparent px-3 py-2 text-right text-[13px] text-ink outline-none"
+                  />
+                  <div className="shrink-0 pr-1 text-right text-[13px] font-semibold tnum text-ink">
+                    {formatMoney((Number(it.quantity) || 0) * (Number(it.rate) || 0), { withSymbol: false })}
+                  </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => removeItem(it.key)}
                   aria-label="Remove line"
-                  className="col-span-1 justify-self-end rounded-lg p-2 text-ink-muted transition-colors hover:bg-negative/10 hover:text-negative"
+                  className="self-end sm:self-auto sm:col-span-1 sm:justify-self-end rounded-lg p-2 text-ink-muted transition-colors hover:bg-negative/10 hover:text-negative"
                 >
                   <Trash2 size={14} />
                 </button>

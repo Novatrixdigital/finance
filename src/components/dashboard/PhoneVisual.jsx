@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { ArrowDownLeft, ArrowUpRight, ArrowLeftRight, FileText, TrendingUp, Wifi, BatteryFull, Signal } from 'lucide-react';
 import { LogoMark } from '@/components/brand/Logo';
 import { ArcField } from '@/components/brand/WaveViz';
+import { useWorkspace } from '@/context/WorkspaceContext';
 import { formatMoney, formatCompact, formatRelativeDate } from '@/lib/format';
 import { cx } from '@/lib/utils';
 
@@ -49,7 +50,7 @@ function PhoneFrame({ children, className, tone = 'dark' }) {
   return (
     <div
       className={cx(
-        'relative overflow-hidden rounded-[2.4rem] border border-hair-strong p-[3px] shadow-lift',
+        'relative overflow-hidden rounded-[2.4rem] border border-hair-strong p-[3px] shadow-lift transition-all duration-500 ease-premium',
         tone === 'dark' ? 'bg-night-500' : 'bg-night-600',
         className,
       )}
@@ -82,28 +83,44 @@ const ACTIONS = [
 ];
 
 /**
- * The hero product shot: two overlapping app screens, one personal and one
- * business, wrapped in editorial annotations.
- *
- * It is fed the real balances and transactions, so the "screenshot" is
- * genuinely the user's account rather than a static mock.
- *
- * Each screen takes its OWN figure. The front screen used to be handed the
- * active scope total, so the panel captioned PERSONAL showed the business
- * balance in Business view and the combined total in Combined view — the one
- * thing a panel with a fixed caption must never do. `shared` is money in
- * accounts marked "use in both"; it is shown on the personal screen as a
- * separate line rather than added into either side.
+ * The hero product shot: two overlapping app screens (or single screen depending on scope),
+ * tied directly to the global hidden state.
  */
 export function PhoneVisual({
   personal = 0,
   business = 0,
   shared = 0,
+  receivables = 0,
+  payables = 0,
   growth = 0,
   transactions = [],
   trend = [],
 }) {
+  const { hidden, isPersonal, isBusiness, isCombined } = useWorkspace();
   const recent = transactions.slice(0, 3);
+
+  const mask = (value, formatted) => (hidden ? '••••••' : formatted);
+
+  const showBusiness = isBusiness || isCombined;
+  const showPersonal = isPersonal || isCombined;
+
+  const businessItems = [
+    {
+      label: 'Receivables',
+      val: receivables,
+      pct: business > 0 ? Math.min(100, Math.round((receivables / business) * 100)) : 45,
+    },
+    {
+      label: 'Payables',
+      val: payables,
+      pct: business > 0 ? Math.min(100, Math.round((payables / business) * 100)) : 30,
+    },
+    {
+      label: 'Net Operating',
+      val: Math.max(0, business + receivables - payables),
+      pct: 85,
+    },
+  ];
 
   return (
     <div className="relative select-none">
@@ -115,150 +132,167 @@ export function PhoneVisual({
         </div>
       </div>
 
-      {/*
-        Editorial annotations sit in normal flow above and below the devices.
-        They were absolutely positioned over the phone area before, which meant
-        they printed straight across the screens at most widths.
-      */}
       <p className="mb-1 hidden text-right font-editorial text-[17px] italic leading-[1.2] text-ink-dim xl:block">
         Discipline today, freedom tomorrow.
       </p>
 
-      <div className="relative mx-auto flex h-[26rem] w-full max-w-[26rem] items-center justify-center sm:h-[29rem]">
-        {/* ── Back phone: Business ──────────────────────────────────────── */}
-        <PhoneFrame
-          tone="light"
-          className="absolute left-[6%] top-3 h-[21rem] w-[11rem] -rotate-[9deg] opacity-90 sm:h-[23rem] sm:w-[12.5rem]"
-        >
-          <div className="px-4 pt-4">
-            <div className="mb-4 flex items-center justify-between">
-              <LogoMark size={22} />
-              <span className="rounded-full border border-lime/25 bg-lime/10 px-2 py-0.5 text-[8px] font-bold uppercase tracking-[0.1em] text-lime">
-                Business
-              </span>
-            </div>
-
-            <p className="text-[9px] uppercase tracking-[0.12em] text-white/35">Business Balance</p>
-            <p className="mt-1 text-[19px] font-bold tracking-tight text-white tnum">
-              {formatCompact(business)}
-            </p>
-
-            <div className="mt-4 space-y-2">
-              {['Receivables', 'Payables', 'Runway'].map((label, i) => (
-                <div key={label} className="rounded-xl border border-white/[0.06] bg-white/[0.03] p-2.5">
-                  <p className="text-[8.5px] uppercase tracking-[0.1em] text-white/35">{label}</p>
-                  <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-white/10">
-                    <div
-                      className="h-full rounded-full bg-lime"
-                      style={{ width: `${[68, 42, 84][i]}%`, opacity: 0.5 + i * 0.2 }}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-4 rounded-xl border border-lime/20 bg-lime/[0.06] p-3">
-              <TrendingUp size={12} className="mb-1.5 text-lime" />
-              <p className="text-[9px] leading-snug text-white/60">
-                More control.
-                <br />
-                More freedom.
-              </p>
-            </div>
-          </div>
-        </PhoneFrame>
-
-        {/* ── Front phone: Personal ─────────────────────────────────────── */}
-        <PhoneFrame className="absolute right-[4%] top-8 z-10 h-[22rem] w-[12rem] rotate-[4deg] sm:h-[26rem] sm:w-[13.5rem]">
-          <div className="px-4 pt-3">
-            <div className="mb-3 flex items-center justify-between">
-              <LogoMark size={22} />
-              <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[8px] font-bold uppercase tracking-[0.1em] text-white/50">
-                Personal
-              </span>
-            </div>
-
-            <p className="text-[9px] uppercase tracking-[0.12em] text-white/35">Personal Balance</p>
-            <p className="mt-1 text-[21px] font-bold leading-none tracking-tight text-white tnum">
-              {formatMoney(personal)}
-            </p>
-            <p className="mt-1.5 flex items-center gap-1 text-[9.5px] font-medium text-lime">
-              <TrendingUp size={9} />
-              {growth >= 0 ? '+' : ''}
-              {growth}% this month
-            </p>
-
-            {shared > 0 && (
-              <p className="mt-1 text-[8.5px] text-white/35">
-                + {formatCompact(shared, { withSymbol: true })} shared with business
-              </p>
+      <div className="relative mx-auto flex h-[24rem] xs:h-[26rem] sm:h-[29rem] w-full max-w-[26rem] items-center justify-center scale-[0.85] xs:scale-95 sm:scale-100 transition-transform duration-300">
+        {/* ── Business Phone ──────────────────────────────────────── */}
+        {showBusiness && (
+          <PhoneFrame
+            tone="light"
+            className={cx(
+              'h-[21rem] w-[11rem] sm:h-[23rem] sm:w-[12.5rem]',
+              isCombined
+                ? 'absolute left-[6%] top-3 -rotate-[9deg] opacity-90'
+                : 'relative z-10 mx-auto rotate-0 h-[22rem] w-[12rem] sm:h-[26rem] sm:w-[13.5rem]',
             )}
+          >
+            <div className="px-4 pt-4">
+              <div className="mb-4 flex items-center justify-between">
+                <LogoMark size={22} />
+                <span className="rounded-full border border-lime/25 bg-lime/10 px-2 py-0.5 text-[8px] font-bold uppercase tracking-[0.1em] text-lime">
+                  Business
+                </span>
+              </div>
 
-            <MiniTrend points={trend} />
+              <p className="text-[9px] uppercase tracking-[0.12em] text-white/35">Business Balance</p>
+              <p className="mt-1 text-[19px] font-bold tracking-tight text-white tnum">
+                {mask(business, formatMoney(business))}
+              </p>
 
-            {/* Action grid */}
-            <div className="mt-3 grid grid-cols-4 gap-1.5">
-              {ACTIONS.map(({ Icon, label }) => (
-                <div
-                  key={label}
-                  className="flex flex-col items-center gap-1 rounded-xl border border-white/[0.06] bg-white/[0.03] py-2"
-                >
-                  <Icon size={11} className="text-lime" strokeWidth={2.2} />
-                  <span className="text-[7px] font-medium text-white/45">{label}</span>
-                </div>
-              ))}
+              <div className="mt-4 space-y-2">
+                {businessItems.map(({ label, val, pct }, i) => (
+                  <div key={label} className="rounded-xl border border-white/[0.06] bg-white/[0.03] p-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[8.5px] uppercase tracking-[0.1em] text-white/35">{label}</p>
+                      <p className="text-[9px] font-semibold text-white/80 tnum">
+                        {mask(val, formatCompact(val, { withSymbol: true }))}
+                      </p>
+                    </div>
+                    <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-white/10">
+                      <div
+                        className="h-full rounded-full bg-lime transition-all duration-500"
+                        style={{ width: `${Math.max(10, pct)}%`, opacity: 0.5 + i * 0.2 }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-4 rounded-xl border border-lime/20 bg-lime/[0.06] p-3">
+                <TrendingUp size={12} className="mb-1.5 text-lime" />
+                <p className="text-[9px] leading-snug text-white/60">
+                  More control.
+                  <br />
+                  More freedom.
+                </p>
+              </div>
             </div>
+          </PhoneFrame>
+        )}
 
-            {/* Recent */}
-            <p className="mb-1.5 mt-4 text-[9px] font-semibold text-white/70">Recent Transactions</p>
-            <div className="space-y-1.5">
-              {(recent.length
-                ? recent
-                : [
-                    { id: 'a', description: 'Client Payment', amount: 150000, type: 'income', txn_date: null },
-                    { id: 'b', description: 'Office Rent', amount: 60000, type: 'expense', txn_date: null },
-                    { id: 'c', description: 'Amazon Purchase', amount: 8499, type: 'expense', txn_date: null },
-                  ]
-              ).map((t) => (
-                <div
-                  key={t.id}
-                  className="flex items-center gap-2 rounded-lg border border-white/[0.05] bg-white/[0.02] p-1.5"
-                >
-                  <span
-                    className={cx(
-                      'flex h-5 w-5 shrink-0 items-center justify-center rounded-md',
-                      t.type === 'income' ? 'bg-lime/15 text-lime' : 'bg-white/[0.06] text-white/45',
-                    )}
+        {/* ── Personal Phone ─────────────────────────────────────── */}
+        {showPersonal && (
+          <PhoneFrame
+            className={cx(
+              'h-[22rem] w-[12rem] sm:h-[26rem] sm:w-[13.5rem]',
+              isCombined
+                ? 'absolute right-[4%] top-8 z-10 rotate-[4deg]'
+                : 'relative z-10 mx-auto rotate-0',
+            )}
+          >
+            <div className="px-4 pt-3">
+              <div className="mb-3 flex items-center justify-between">
+                <LogoMark size={22} />
+                <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[8px] font-bold uppercase tracking-[0.1em] text-white/50">
+                  Personal
+                </span>
+              </div>
+
+              <p className="text-[9px] uppercase tracking-[0.12em] text-white/35">Personal Balance</p>
+              <p className="mt-1 text-[21px] font-bold leading-none tracking-tight text-white tnum">
+                {mask(personal, formatMoney(personal))}
+              </p>
+              <p className="mt-1.5 flex items-center gap-1 text-[9.5px] font-medium text-lime">
+                <TrendingUp size={9} />
+                {growth >= 0 ? '+' : ''}
+                {growth}% this month
+              </p>
+
+              {shared > 0 && (
+                <p className="mt-1 text-[8.5px] text-white/35">
+                  + {mask(shared, formatCompact(shared, { withSymbol: true }))} shared with business
+                </p>
+              )}
+
+              <MiniTrend points={trend} />
+
+              {/* Action grid */}
+              <div className="mt-3 grid grid-cols-4 gap-1.5">
+                {ACTIONS.map(({ Icon, label }) => (
+                  <div
+                    key={label}
+                    className="flex flex-col items-center gap-1 rounded-xl border border-white/[0.06] bg-white/[0.03] py-2"
                   >
-                    {t.type === 'income' ? <ArrowDownLeft size={9} /> : <ArrowUpRight size={9} />}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[8px] font-medium text-white/75">
-                      {t.description}
-                    </span>
-                    <span className="block text-[7px] text-white/30">
-                      {t.txn_date ? formatRelativeDate(t.txn_date) : 'Today'}
-                    </span>
-                  </span>
-                  <span
-                    className={cx(
-                      'shrink-0 text-[8px] font-semibold tnum',
-                      t.type === 'income' ? 'text-lime' : 'text-white/55',
-                    )}
+                    <Icon size={11} className="text-lime" strokeWidth={2.2} />
+                    <span className="text-[7px] font-medium text-white/45">{label}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Recent */}
+              <p className="mb-1.5 mt-4 text-[9px] font-semibold text-white/70">Recent Transactions</p>
+              <div className="space-y-1.5">
+                {(recent.length
+                  ? recent
+                  : [
+                      { id: 'a', description: 'Client Payment', amount: 150000, type: 'income', txn_date: null },
+                      { id: 'b', description: 'Office Rent', amount: 60000, type: 'expense', txn_date: null },
+                      { id: 'c', description: 'Amazon Purchase', amount: 8499, type: 'expense', txn_date: null },
+                    ]
+                ).map((t) => (
+                  <div
+                    key={t.id}
+                    className="flex items-center gap-2 rounded-lg border border-white/[0.05] bg-white/[0.02] p-1.5"
                   >
-                    {t.type === 'income' ? '+' : '−'}
-                    {formatCompact(t.amount, { withSymbol: true })}
-                  </span>
-                </div>
-              ))}
+                    <span
+                      className={cx(
+                        'flex h-5 w-5 shrink-0 items-center justify-center rounded-md',
+                        t.type === 'income' ? 'bg-lime/15 text-lime' : 'bg-white/[0.06] text-white/45',
+                      )}
+                    >
+                      {t.type === 'income' ? <ArrowDownLeft size={9} /> : <ArrowUpRight size={9} />}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[8px] font-medium text-white/75">
+                        {t.description}
+                      </span>
+                      <span className="block text-[7px] text-white/30">
+                        {t.txn_date ? formatRelativeDate(t.txn_date) : 'Today'}
+                      </span>
+                    </span>
+                    <span
+                      className={cx(
+                        'shrink-0 text-[8px] font-semibold tnum',
+                        t.type === 'income' ? 'text-lime' : 'text-white/55',
+                      )}
+                    >
+                      {t.type === 'income' ? '+' : '−'}
+                      {mask(t.amount, formatCompact(t.amount, { withSymbol: true }))}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
-        </PhoneFrame>
-
+          </PhoneFrame>
+        )}
       </div>
 
       <p className="mt-2 hidden text-right text-[11.5px] font-semibold uppercase leading-[1.6] tracking-[0.1em] text-ink-muted xl:block">
-        Personal &amp; Business <span className="text-accent">Together.</span>
+        {isPersonal && <>Personal <span className="text-accent">Workspace.</span></>}
+        {isBusiness && <>Business <span className="text-accent">Workspace.</span></>}
+        {isCombined && <>Personal &amp; Business <span className="text-accent">Together.</span></>}
       </p>
     </div>
   );

@@ -362,6 +362,13 @@
 }
 
 @layer utilities {
+  .text-figure-fluid {
+    font-size: clamp(1.25rem, 1.8vw + 0.5rem, 1.95rem);
+    font-weight: 700;
+    line-height: 1.1;
+    letter-spacing: -0.025em;
+  }
+
   .no-scrollbar::-webkit-scrollbar {
     display: none;
   }

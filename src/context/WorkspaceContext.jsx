@@ -23,6 +23,9 @@ export function WorkspaceProvider({ children }) {
     return Object.values(SCOPES).includes(saved) ? saved : SCOPES.COMBINED;
   });
 
+  const [hidden, setHidden] = useState(true);
+  const toggleHidden = useCallback(() => setHidden((v) => !v), []);
+
   const setScope = useCallback((next) => {
     if (!Object.values(SCOPES).includes(next)) return;
     setScopeState(next);
@@ -152,6 +155,9 @@ export function WorkspaceProvider({ children }) {
     () => ({
       scope,
       setScope,
+      hidden,
+      setHidden,
+      toggleHidden,
       scopeIds,
       workspaces,
       personal,
@@ -168,6 +174,9 @@ export function WorkspaceProvider({ children }) {
     [
       scope,
       setScope,
+      hidden,
+      setHidden,
+      toggleHidden,
       scopeIds,
       workspaces,
       personal,

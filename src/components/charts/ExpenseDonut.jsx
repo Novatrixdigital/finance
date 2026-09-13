@@ -75,18 +75,18 @@ export function ExpenseDonut({ data = [], loading, period = 'month', onPeriodCha
           description="Categorised expenses appear here as a split."
         />
       ) : (
-        <div className="flex flex-col items-center gap-6 lg:flex-row lg:items-center">
+        <div className="flex flex-col items-center gap-5 sm:flex-row sm:items-center">
           {/* Donut */}
-          <div className="relative h-[210px] w-[210px] shrink-0">
+          <div className="relative h-[190px] w-[190px] shrink-0">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
                   data={slices}
                   dataKey="value"
                   nameKey="name"
-                  innerRadius={68}
-                  outerRadius={100}
-                  paddingAngle={2}
+                  innerRadius={60}
+                  outerRadius={90}
+                  paddingAngle={3}
                   stroke="none"
                   startAngle={90}
                   endAngle={-270}
@@ -102,23 +102,22 @@ export function ExpenseDonut({ data = [], loading, period = 'month', onPeriodCha
                     />
                   ))}
                 </Pie>
-                <Tooltip content={<DonutTooltip />} />
               </PieChart>
             </ResponsiveContainer>
 
             {/* Centre readout */}
-            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-              <p className="text-[19px] font-bold tracking-tight tnum text-ink">
+            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-4">
+              <p className="text-[17px] font-bold tracking-tight tnum text-ink">
                 {formatMoney(activeIndex !== null ? slices[activeIndex].value : total)}
               </p>
-              <p className="mt-0.5 max-w-[7rem] truncate text-center text-[11px] text-ink-muted">
+              <p className="mt-0.5 max-w-[7.5rem] truncate text-center text-[10.5px] font-medium text-ink-muted">
                 {activeIndex !== null ? slices[activeIndex].name : 'Total Expenses'}
               </p>
             </div>
           </div>
 
           {/* Legend */}
-          <ul className="w-full flex-1 space-y-1">
+          <ul className="w-full flex-1 space-y-1 min-w-0">
             {slices.slice(0, 7).map((slice, index) => (
               <li key={slice.id ?? index}>
                 <button
@@ -126,13 +125,13 @@ export function ExpenseDonut({ data = [], loading, period = 'month', onPeriodCha
                   onMouseEnter={() => setActiveIndex(index)}
                   onMouseLeave={() => setActiveIndex(null)}
                   className={cx(
-                    'flex w-full items-center gap-3 rounded-xl px-2.5 py-1.5 text-left transition-colors duration-200',
+                    'flex w-full items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left transition-colors duration-200',
                     activeIndex === index ? 'bg-elevated' : 'hover:bg-elevated/60',
                   )}
                 >
                   <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: slice.color }} />
-                  <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink-dim">{slice.name}</span>
-                  <span className="shrink-0 text-[12px] font-semibold tnum text-ink">{slice.percentage}%</span>
+                  <span className="min-w-0 flex-1 truncate text-[12px] text-ink-dim">{slice.name}</span>
+                  <span className="shrink-0 text-[11.5px] font-semibold tnum text-ink whitespace-nowrap">{slice.percentage}%</span>
                 </button>
               </li>
             ))}
