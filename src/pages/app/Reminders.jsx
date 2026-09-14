@@ -375,7 +375,7 @@ export default function Reminders() {
                     <Badge className={status.className} dot>
                       {status.label}
                     </Badge>
-                    <div className="flex opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                    <div className="flex reveal-actions">
                       {r.status === 'scheduled' && (
                         <button
                           type="button"

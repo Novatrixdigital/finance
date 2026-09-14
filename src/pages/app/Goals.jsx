@@ -190,7 +190,7 @@ export default function Goals() {
                       </div>
                     </div>
 
-                    <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                    <div className="flex shrink-0 items-center gap-1 reveal-actions">
                       <button
                         type="button"
                         onClick={() => open('goal', { record: goal })}

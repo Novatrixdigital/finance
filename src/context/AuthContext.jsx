@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { supabase, readableError, isSupabaseConfigured } from '@/lib/supabase';
 import { AUTH_REDIRECTS } from '@/lib/config';
+import { setMoneyDefaults } from '@/lib/format';
 
 const AuthContext = createContext(null);
 
@@ -18,6 +19,14 @@ export function AuthProvider({ children }) {
   const mounted = useRef(true);
 
   const user = session?.user ?? null;
+
+  /*
+    Applied during render, not in an effect: every figure on the first paint
+    after the profile arrives has to already be in the account's currency. An
+    effect would run a frame too late and flash ₹ at a dollar account. It only
+    writes a module-level default, so it is safe to repeat.
+  */
+  useMemo(() => setMoneyDefaults({ currency: profile?.currency }), [profile?.currency]);
 
   const loadAccountData = useCallback(async (uid) => {
     if (!uid) {

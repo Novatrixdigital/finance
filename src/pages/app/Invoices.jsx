@@ -211,14 +211,14 @@ export default function Invoices() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="table-stack w-full sm:min-w-[56rem]">
+            <table className="table-stack w-full sm:min-w-[44rem]">
               <thead className="bg-surface/50">
                 <tr>
                   <th className="t-head">Invoice</th>
                   <th className="t-head">Customer</th>
                   <th className="t-head">Due</th>
                   <th className="t-head text-right">Total</th>
-                  <th className="t-head text-right">Balance</th>
+                  <th className="t-head col-wide text-right">Balance</th>
                   <th className="t-head">Status</th>
                   <th className="t-head text-right">Actions</th>
                 </tr>
@@ -261,7 +261,7 @@ export default function Invoices() {
                       <td
                         data-label="Balance"
                         className={cx(
-                          't-cell text-right font-semibold tnum',
+                          't-cell col-wide text-right font-semibold tnum',
                           Number(inv.balance_due) > 0 ? 'text-ink' : 'text-accent',
                         )}
                       >
@@ -294,7 +294,7 @@ export default function Invoices() {
                               <IndianRupee size={12} /> Record
                             </button>
                           )}
-                          <div className="flex opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                          <div className="flex reveal-actions">
                             <button
                               type="button"
                               onClick={() => open('invoice', { record: inv })}

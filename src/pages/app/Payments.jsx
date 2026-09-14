@@ -173,11 +173,11 @@ export default function Payments() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="table-stack w-full sm:min-w-[52rem]">
+            <table className="table-stack w-full sm:min-w-[40rem]">
               <thead className="bg-surface/50">
                 <tr>
                   <th className="t-head">Name</th>
-                  <th className="t-head">Contact</th>
+                  <th className="t-head col-wide">Contact</th>
                   <th className="t-head">Due Date</th>
                   <th className="t-head text-right">Amount</th>
                   <th className="t-head">Status</th>
@@ -220,7 +220,7 @@ export default function Payments() {
                         </div>
                       </td>
 
-                      <td className="t-cell text-[13px] text-ink-dim" data-label="Contact">
+                      <td className="t-cell col-wide text-[13px] text-ink-dim" data-label="Contact">
                         {p.contact?.name || '—'}
                       </td>
 
@@ -267,7 +267,7 @@ export default function Payments() {
                               Mark paid
                             </button>
                           )}
-                          <div className="flex opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                          <div className="flex reveal-actions">
                             <button
                               type="button"
                               onClick={() => open('payment', { record: p })}

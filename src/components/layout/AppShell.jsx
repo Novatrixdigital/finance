@@ -37,13 +37,21 @@ export function AppShell() {
 
   return (
     <div className="min-h-screen bg-base">
+      {/* First stop for a keyboard user: otherwise every page begins with a
+          sixteen-item tab crawl through the navigation. */}
+      <a href="#main" className="skip-link">
+        Skip to content
+      </a>
+
       <Sidebar mobileOpen={menuOpen} onCloseMobile={closeMenu} />
 
-      <div className="lg:pl-sidebar">
+      {/* Clears the icon rail from `md`, the full sidebar from `lg`. */}
+      <div className="md:pl-railicon lg:pl-sidebar">
         <TopHeader onOpenMenu={() => setMenuOpen(true)} onOpenSearch={() => setSearchOpen(true)} />
 
-        {/* Bottom padding clears the mobile nav bar. */}
-        <main className="px-4 pb-28 pt-6 sm:px-6 lg:px-8 lg:pb-12">
+        {/* The tall bottom padding only clears the phone bar, which is gone
+            from `md` up — a tablet was reserving 7rem for nothing. */}
+        <main id="main" className="px-4 pb-28 pt-6 sm:px-6 md:pb-12 lg:px-8">
           <Outlet />
         </main>
       </div>

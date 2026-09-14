@@ -2,12 +2,13 @@
  * Formatting helpers.
  *
  * Money is rendered in the Indian grouping system by default (₹ 24,85,000),
- * which is what the product is designed around. Pass a different locale or
- * currency and everything below follows it.
+ * which is what the product is designed around. The account holder's saved
+ * currency overrides that at runtime via `setMoneyDefaults`, and any single
+ * call can still pass its own `currency` / `locale`.
  */
 
-const DEFAULT_LOCALE = import.meta.env.VITE_DEFAULT_LOCALE || 'en-IN';
-const DEFAULT_CURRENCY = import.meta.env.VITE_DEFAULT_CURRENCY || 'INR';
+const BUILD_LOCALE = import.meta.env.VITE_DEFAULT_LOCALE || '';
+const BUILD_CURRENCY = import.meta.env.VITE_DEFAULT_CURRENCY || 'INR';
 
 export const CURRENCY_SYMBOLS = {
   INR: '₹',
@@ -20,7 +21,40 @@ export const CURRENCY_SYMBOLS = {
   CAD: 'C$',
 };
 
-export function currencySymbol(currency = DEFAULT_CURRENCY) {
+/** Grouping differs per currency; en-IN would lakh-group dollars. */
+const LOCALE_FOR_CURRENCY = {
+  INR: 'en-IN',
+  USD: 'en-US',
+  EUR: 'en-IE',
+  GBP: 'en-GB',
+  AED: 'en-AE',
+  SGD: 'en-SG',
+  AUD: 'en-AU',
+  CAD: 'en-CA',
+};
+
+/*
+  The active currency is runtime state, not a build constant.
+
+  Settings has always offered a "Default currency" picker and written it to the
+  profile — but every formatter read a build-time env var, so the choice
+  changed nothing anywhere in the app. AuthContext now pushes the saved profile
+  value in here, which is what makes that control mean something.
+*/
+let activeCurrency = BUILD_CURRENCY;
+let activeLocale = BUILD_LOCALE || LOCALE_FOR_CURRENCY[BUILD_CURRENCY] || 'en-IN';
+
+/** Called by AuthContext once the profile is known. Safe to call repeatedly. */
+export function setMoneyDefaults({ currency, locale } = {}) {
+  if (currency && CURRENCY_SYMBOLS[currency]) activeCurrency = currency;
+  // An explicit VITE_DEFAULT_LOCALE always wins; otherwise follow the currency.
+  activeLocale = locale || BUILD_LOCALE || LOCALE_FOR_CURRENCY[activeCurrency] || 'en-IN';
+}
+
+export const defaultCurrency = () => activeCurrency;
+export const defaultLocale = () => activeLocale;
+
+export function currencySymbol(currency = activeCurrency) {
   return CURRENCY_SYMBOLS[currency] || currency;
 }
 
@@ -31,8 +65,8 @@ export function currencySymbol(currency = DEFAULT_CURRENCY) {
  */
 export function formatMoney(value, options = {}) {
   const {
-    currency = DEFAULT_CURRENCY,
-    locale = DEFAULT_LOCALE,
+    currency = activeCurrency,
+    locale = activeLocale,
     decimals,
     withSymbol = true,
     spaced = true,
@@ -57,10 +91,14 @@ export function formatMoney(value, options = {}) {
 }
 
 /**
- * Compact Indian notation for tight spaces: 2485000 → "₹24.9L", 12000000 → "₹1.2Cr"
+ * Compact Indian notation for tight spaces: 2485000 → "₹25L", 12000000 → "₹1.2Cr"
+ *
+ * One decimal below 10, none above — "₹25L" reads better than "₹24.9L" at the
+ * size these appear. (The old doc comment here claimed "₹24.9L", which the code
+ * has never produced.)
  */
 export function formatCompact(value, options = {}) {
-  const { currency = DEFAULT_CURRENCY, withSymbol = true } = options;
+  const { currency = activeCurrency, withSymbol = true } = options;
   const n = Number(value) || 0;
   const abs = Math.abs(n);
   const sym = withSymbol ? currencySymbol(currency) : '';
@@ -96,7 +134,7 @@ export function formatPercent(value, { decimals = 1, signed = false } = {}) {
   return `${sign}${n.toFixed(decimals).replace(/\.0$/, '')}%`;
 }
 
-export function formatNumber(value, locale = DEFAULT_LOCALE) {
+export function formatNumber(value, locale = activeLocale) {
   return new Intl.NumberFormat(locale).format(Number(value) || 0);
 }
 
@@ -118,7 +156,7 @@ function toDate(input) {
 export function formatDate(input, opts = {}) {
   const d = toDate(input);
   if (!d) return '—';
-  return d.toLocaleDateString(DEFAULT_LOCALE, {
+  return d.toLocaleDateString(activeLocale, {
     day: '2-digit',
     month: 'short',
     year: 'numeric',
@@ -130,7 +168,7 @@ export function formatDate(input, opts = {}) {
 export function formatDateShort(input) {
   const d = toDate(input);
   if (!d) return '—';
-  return d.toLocaleDateString(DEFAULT_LOCALE, { day: '2-digit', month: 'short' });
+  return d.toLocaleDateString(activeLocale, { day: '2-digit', month: 'short' });
 }
 
 /** "Today", "Yesterday", "3 days ago", then falls back to a date. */

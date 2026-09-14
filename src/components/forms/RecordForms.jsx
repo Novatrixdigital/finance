@@ -16,7 +16,7 @@ import {
   SHARED_WORKSPACE,
   SHARED_LABEL,
 } from '@/lib/constants';
-import { toISODate } from '@/lib/format';
+import { toISODate, defaultCurrency } from '@/lib/format';
 import { GOAL_ICONS, CATEGORY_ICONS } from '@/lib/icons';
 import { icon as resolveIcon } from '@/lib/utils';
 
@@ -170,7 +170,7 @@ export function AccountForm({ open, onClose, record }) {
     type: 'bank',
     institution: '',
     account_number: '',
-    currency: 'INR',
+    currency: defaultCurrency(),
     opening_balance: '',
     credit_limit: '',
     notes: '',

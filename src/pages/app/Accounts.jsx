@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { Plus, Pencil, Trash2, Landmark, Star, ArrowUpRight } from 'lucide-react';
+import { Plus, Pencil, Trash2, Landmark, Star, ArrowUpRight, AlertTriangle } from 'lucide-react';
 import { PageHeader, StatStrip } from '@/components/layout/PageHeader';
 import { Card, Button, Badge, EmptyState, LoadingBlock, ConfirmDialog, WorkspaceBadge } from '@/components/ui';
 import { useCollection } from '@/hooks/useCollection';
@@ -42,6 +42,18 @@ export default function Accounts() {
     return { assets, liabilities, cash, net: assets - liabilities, count: active.length };
   }, [active]);
 
+  /*
+    Balances are added together as plain numbers — here, in dashboard_summary,
+    everywhere. There is no exchange rate anywhere in the product, so a dollar
+    account and a rupee account sum as if a dollar were a rupee. The totals are
+    only meaningful while one currency is in play; when it is not, say so
+    rather than print a confident wrong number.
+  */
+  const mixedCurrencies = useMemo(() => {
+    const seen = new Set(active.map((a) => a.currency).filter(Boolean));
+    return seen.size > 1 ? [...seen] : null;
+  }, [active]);
+
   const confirmDelete = async () => {
     if (!confirm) return;
     setDeleting(true);
@@ -79,6 +91,21 @@ export default function Accounts() {
           ]}
         />
       </PageHeader>
+
+      {mixedCurrencies && (
+        <Card className="mb-6 border-warning/30 bg-warning/[0.06]">
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={17} className="mt-0.5 shrink-0 text-warning" />
+            <p className="text-[13px] leading-relaxed text-ink-dim">
+              Your accounts are held in {mixedCurrencies.join(', ')}. Novatrix does not convert
+              between currencies, so the totals above — and net worth on the dashboard — add the
+              balances as plain numbers.{' '}
+              <span className="text-ink">Read each account&apos;s own balance</span> as the accurate
+              figure.
+            </p>
+          </div>
+        </Card>
+      )}
 
       {loading ? (
         <Card>
@@ -141,7 +168,7 @@ export default function Accounts() {
                     </div>
                   </div>
 
-                  <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                  <div className="flex shrink-0 items-center gap-1 reveal-actions">
                     <button
                       type="button"
                       onClick={() => open('account', { record: account })}

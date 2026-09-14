@@ -3,30 +3,53 @@
 -- ║                        N O V A T R I X   D I G I T A L                   ║
 -- ║                          Finance. Simplified.                            ║
 -- ║                                                                          ║
--- ║                  COMPLETE DATABASE SETUP — SINGLE SCRIPT                 ║
+-- ║                     THE COMPLETE DATABASE — ONE FILE                     ║
 -- ║                                                                          ║
 -- ╚══════════════════════════════════════════════════════════════════════════╝
 --
 --  HOW TO RUN
 --  ──────────
---  1. Open your Supabase project → SQL Editor → New query.
+--  1. Supabase project → SQL Editor → New query.
 --  2. Paste this entire file and press Run.
 --  3. Copy Project URL + anon key from Settings → API into your .env.
 --
---  The script is idempotent: every table uses CREATE TABLE IF NOT EXISTS,
---  every policy is dropped before being recreated, and every function uses
---  CREATE OR REPLACE. Running it twice is safe.
+--  There is nothing else to run. This file was previously four —
+--  novatrix_complete.sql plus migrations 002, 003 and 004 — which had to be
+--  applied in the right order, and silently left the database half-built if
+--  one was skipped. They are folded in here as Parts 7, 8 and 9, in the order
+--  they were always meant to run.
+--
+--  SAFE ON A DATABASE THAT ALREADY HOLDS REAL DATA
+--  ───────────────────────────────────────────────
+--  Idempotent throughout: every table is CREATE TABLE IF NOT EXISTS, every
+--  policy is dropped before it is recreated, every function is CREATE OR
+--  REPLACE, and every column add is IF NOT EXISTS. Running it twice is safe.
+--  Running it on a database that already has parts of this applied is safe.
+--
+--  Nothing in this file deletes a transaction, an invoice, a payment or an
+--  account, and no balance is recomputed behind your back. The three places
+--  that change what you already see are called out where they happen:
+--  Part 8 §1 (accounts and contacts may belong to BOTH workspaces), §4 (the
+--  Personal/Business split reports the truth rather than echoing the selected
+--  scope) and §5 (every subscription gains a mirror row on Recurring, which
+--  never posts to the ledger, so nothing can be charged twice).
 --
 --  Target: Supabase / PostgreSQL 15+
 --
 --  CONTENTS
 --  ────────
+--    Part 0  Enum catch-up ..... no-op on a new database; see the note there
 --    Part 1  Schema ............ tables, enums, balance + invoice triggers
 --    Part 2  Row Level Security  policies, ownership helper, grants
 --    Part 3  Functions & RPCs .. signup bootstrap, dashboard aggregations
 --    Part 4  Storage ........... avatars + attachments buckets
 --    Part 5  Maintenance ....... reset_my_data()
 --    Part 6  Subscriptions ..... renewals, reminders, Resend email support
+--    Part 7  Cash .............. cash accounts, one primary account,
+--                                paid payments reach the ledger
+--    Part 8  Shared & automation shared accounts/contacts, subscription
+--                                automation, reminders for everything
+--    Part 9  Weekly digest ..... the Monday summary email
 --
 --  DATA ISOLATION CONTRACT
 --  ───────────────────────
@@ -42,6 +65,43 @@
 --  the service_role key to any client.
 --
 -- ============================================================================
+
+
+-- ============================================================================
+-- ============================================================================
+--
+--  PART 0 — ENUM CATCH-UP
+--
+--  Runs first, on its own, and does nothing at all on a new database.
+--
+--  Postgres will not let a newly added enum label be USED in the transaction
+--  that adds it. Part 1 already creates `reminder_kind` with every label it
+--  needs, so a fresh install skips this entirely — the guard finds no type and
+--  exits. It is here for a database created before 'budget' joined that enum,
+--  where the label has to be added and committed before Part 8 refers to it.
+--
+--  This is also the one part that must not be wrapped in a transaction. If
+--  your SQL client wraps the whole file in one and objects with "unsafe use of
+--  new value of enum type", run this part on its own first and then the rest —
+--  the file is idempotent, so nothing is harmed by that.
+--
+-- ============================================================================
+-- ============================================================================
+
+do $$
+begin
+  if exists (select 1 from pg_type where typname = 'reminder_kind')
+     and not exists (
+       select 1
+         from pg_enum e
+         join pg_type t on t.oid = e.enumtypid
+        where t.typname = 'reminder_kind'
+          and e.enumlabel = 'budget'
+     )
+  then
+    alter type reminder_kind add value 'budget';
+  end if;
+end $$;
 
 
 -- ============================================================================
@@ -1705,8 +1765,8 @@ create policy "attachments_owner_delete" on storage.objects
 --  The demo seed that used to live here has been removed. It opened with
 --  nine `delete from … where user_id = auth.uid()` statements before writing
 --  its sample book, so pressing "Load demo data" on an account holding real
---  records would have erased them. The app no longer offers it, and
---  migration_002 drops the functions from databases that already have them.
+--  records would have erased them. The app no longer offers it, and Part 7
+--  drops the functions from databases that already have them.
 --
 --  (was 05_seed.sql)
 -- ============================================================================
@@ -2516,6 +2576,2076 @@ grant execute on function public.send_test_reminder() to authenticated;
 -- -- Inspect:  select * from cron.job;
 -- -- Remove:   select cron.unschedule('novatrix-send-reminders');
 
+
+
+-- ============================================================================
+-- ============================================================================
+--
+--  PART 7 — CASH, ONE PRIMARY ACCOUNT, PAYMENTS → LEDGER
+--
+--  Was migration_002_cash_and_fixes.sql.
+--
+--  Cash stops being a parallel system: it is an ordinary account of type 'cash',
+--  so an entry booked against it moves cash in hand AND counts in the month's
+--  spend, because the same ledger triggers do both.
+--
+--  Also here: exactly one primary account per user, enforced by trigger rather
+--  than by hoping the UI behaves; and a payment marked paid now posts to the
+--  ledger instead of only changing its own status.
+--
+--  §2 adds a zero-balance "Cash in Hand" account to any workspace that does not
+--  have one. Zero balance means zero effect on your totals.
+--
+-- ============================================================================
+-- ============================================================================
+
+begin;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §1  PRIMARY ACCOUNT — exactly one, across the whole account
+--
+--  `is_primary` was a plain boolean with nothing enforcing it: no unique
+--  index, no trigger, and nothing in the form clearing the flag elsewhere.
+--  Ticking "make this primary" on a Personal account therefore left the
+--  Business one flagged too, and the star showed in both places.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+create or replace function public.accounts_enforce_single_primary()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  -- Clear the flag everywhere else this user owns. The trigger is guarded by
+  -- WHEN (new.is_primary), and this statement only ever sets it to false, so
+  -- the recursive fire is a no-op rather than a loop.
+  update public.accounts
+     set is_primary = false
+   where user_id = new.user_id
+     and id <> new.id
+     and is_primary;
+
+  return null;
+end;
+$$;
+
+drop trigger if exists accounts_single_primary on public.accounts;
+create trigger accounts_single_primary
+  after insert or update of is_primary on public.accounts
+  for each row
+  when (new.is_primary)
+  execute function public.accounts_enforce_single_primary();
+
+-- ── One-time correction ──────────────────────────────────────────────────
+--  Signup used to flag two accounts primary (Personal savings + Business
+--  current), so most existing users have two. Keep the most recently touched
+--  one — that is the one they last chose deliberately — and clear the rest.
+--  Only the boolean changes; no balance, name or link is affected.
+with keeper as (
+  select distinct on (user_id) id, user_id
+    from public.accounts
+   where is_primary
+   order by user_id, updated_at desc, created_at desc
+)
+update public.accounts a
+   set is_primary = false
+  from keeper k
+ where a.user_id = k.user_id
+   and a.is_primary
+   and a.id <> k.id;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §2  CASH SYSTEM
+--
+--  Cash is modelled as an ordinary account of type 'cash', which means it
+--  rides on the existing ledger triggers for free: a cash expense lowers
+--  cash in hand AND lands in the month's spend, and a bank→cash withdrawal
+--  is just a transfer, so both sides move together.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- Give every workspace a cash account if it has none. Opening balance 0, so
+-- this cannot shift any figure you are already looking at — it just gives
+-- cash somewhere to live. Set the real amount from the app once it appears.
+insert into public.accounts (user_id, workspace_id, name, type, icon, color, opening_balance, current_balance)
+select w.user_id, w.id, 'Cash in Hand', 'cash', 'wallet', '#A8E600', 0, 0
+  from public.workspaces w
+ where not exists (
+   select 1 from public.accounts a
+    where a.workspace_id = w.id
+      and a.type = 'cash'
+ );
+
+-- ── Cash headline figures ────────────────────────────────────────────────
+create or replace function public.cash_summary(p_scope text default 'combined')
+returns json
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_uid         uuid := (select auth.uid());
+  v_ws          uuid[];
+  v_month_start date := date_trunc('month', current_date)::date;
+
+  v_in_hand     numeric := 0;
+  v_accounts    int     := 0;
+  v_spent_m     numeric := 0;
+  v_spent_all   numeric := 0;
+  v_recv_m      numeric := 0;
+  v_last        date;
+  v_untracked   numeric := 0;
+  v_untracked_n int     := 0;
+begin
+  if v_uid is null then
+    return json_build_object('error', 'not authenticated');
+  end if;
+
+  v_ws := public.workspace_ids_for_scope(p_scope);
+
+  select coalesce(sum(a.current_balance), 0), count(*)
+    into v_in_hand, v_accounts
+    from public.accounts a
+   where a.user_id = v_uid
+     and a.is_active
+     and a.type = 'cash'
+     and a.workspace_id = any (v_ws);
+
+  -- Money that actually left / entered a cash account.
+  select
+    coalesce(sum(t.amount) filter (
+      where t.type = 'expense' and t.txn_date >= v_month_start), 0),
+    coalesce(sum(t.amount) filter (where t.type = 'expense'), 0),
+    coalesce(sum(t.amount) filter (
+      where t.type = 'income' and t.txn_date >= v_month_start), 0),
+    max(t.txn_date)
+  into v_spent_m, v_spent_all, v_recv_m, v_last
+  from public.transactions t
+  join public.accounts a on a.id = t.account_id
+ where t.user_id = v_uid
+   and t.status = 'completed'
+   and a.type = 'cash'
+   and t.workspace_id = any (v_ws);
+
+  -- "Old spend": entries marked paid by cash that were booked against a bank
+  -- or card instead of a cash account, so they never reduced cash in hand.
+  -- Surfaced rather than silently rewritten — the ledger stays as recorded.
+  select coalesce(sum(t.amount), 0), count(*)
+    into v_untracked, v_untracked_n
+    from public.transactions t
+   where t.user_id = v_uid
+     and t.status = 'completed'
+     and t.type = 'expense'
+     and lower(coalesce(t.payment_method, '')) = 'cash'
+     and t.workspace_id = any (v_ws)
+     and (
+       t.account_id is null
+       or not exists (
+         select 1 from public.accounts a
+          where a.id = t.account_id and a.type = 'cash'
+       )
+     );
+
+  return json_build_object(
+    'cash_in_hand',     v_in_hand,
+    'cash_accounts',    v_accounts,
+    'spent_month',      v_spent_m,
+    'spent_total',      v_spent_all,
+    'received_month',   v_recv_m,
+    'last_movement',    v_last,
+    'untracked_amount', v_untracked,
+    'untracked_count',  v_untracked_n
+  );
+end;
+$$;
+
+-- ── Cash spend history ───────────────────────────────────────────────────
+--  Every movement of physical money, newest first. `on_cash_account` false
+--  marks the historical entries described above: paid in cash, but booked
+--  somewhere else. They are included so the record is complete.
+create or replace function public.cash_activity(
+  p_scope text    default 'combined',
+  p_from  date    default null,
+  p_to    date    default null,
+  p_limit integer default 200
+)
+returns table (
+  id              uuid,
+  txn_date        date,
+  description     text,
+  type            transaction_type,
+  amount          numeric,
+  flow            text,           -- 'in' | 'out'
+  account_id      uuid,
+  account_name    text,
+  category_name   text,
+  category_color  text,
+  payment_method  text,
+  workspace_id    uuid,
+  on_cash_account boolean
+)
+language sql
+stable
+security definer
+set search_path = public
+as $fn$
+  with cash_accts as (
+    select a.id, a.name
+      from public.accounts a
+     where a.user_id = (select auth.uid())
+       and a.type = 'cash'
+       and a.workspace_id = any (public.workspace_ids_for_scope(p_scope))
+  ),
+  moves as (
+    -- Cash going out: spent from a cash account, or moved off it.
+    select t.id, t.txn_date, t.description, t.type, t.amount, 'out'::text as flow,
+           t.account_id, ca.name as account_name, t.category_id,
+           t.payment_method, t.workspace_id, true as on_cash_account
+      from public.transactions t
+      join cash_accts ca on ca.id = t.account_id
+     where t.status = 'completed'
+       and t.type in ('expense', 'transfer')
+
+    union all
+
+    -- Cash coming in: received into a cash account.
+    select t.id, t.txn_date, t.description, t.type, t.amount, 'in',
+           t.account_id, ca.name, t.category_id,
+           t.payment_method, t.workspace_id, true
+      from public.transactions t
+      join cash_accts ca on ca.id = t.account_id
+     where t.status = 'completed'
+       and t.type = 'income'
+
+    union all
+
+    -- Cash withdrawn from a bank into a cash account.
+    select t.id, t.txn_date, t.description, t.type, t.amount, 'in',
+           t.to_account_id, ca.name, t.category_id,
+           t.payment_method, t.workspace_id, true
+      from public.transactions t
+      join cash_accts ca on ca.id = t.to_account_id
+     where t.status = 'completed'
+       and t.type = 'transfer'
+
+    union all
+
+    -- Paid in cash, but booked against a non-cash account.
+    select t.id, t.txn_date, t.description, t.type, t.amount, 'out',
+           t.account_id, a.name, t.category_id,
+           t.payment_method, t.workspace_id, false
+      from public.transactions t
+      left join public.accounts a on a.id = t.account_id
+     where t.user_id = (select auth.uid())
+       and t.status = 'completed'
+       and t.type = 'expense'
+       and lower(coalesce(t.payment_method, '')) = 'cash'
+       and t.workspace_id = any (public.workspace_ids_for_scope(p_scope))
+       and not exists (
+         select 1 from cash_accts ca where ca.id = t.account_id
+       )
+  )
+  select
+    m.id,
+    m.txn_date,
+    m.description,
+    m.type,
+    m.amount,
+    m.flow,
+    m.account_id,
+    m.account_name,
+    c.name  as category_name,
+    c.color as category_color,
+    m.payment_method,
+    m.workspace_id,
+    m.on_cash_account
+  from moves m
+  left join public.categories c on c.id = m.category_id
+  where (p_from is null or m.txn_date >= p_from)
+    and (p_to   is null or m.txn_date <= p_to)
+  order by m.txn_date desc, m.id desc
+  limit greatest(coalesce(p_limit, 200), 1);
+$fn$;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §3  PAYMENTS NOW REACH THE LEDGER
+--
+--  Marking a payment paid used to change nothing but the badge: no account
+--  was debited and no ledger row was written, so settled money simply
+--  vanished from the books. A paid payment now posts a real transaction and
+--  keeps a link to it, so the existing balance triggers do the rest.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+alter table public.payments
+  add column if not exists transaction_id uuid references public.transactions(id) on delete set null;
+
+alter table public.payments
+  add column if not exists category_id uuid references public.categories(id) on delete set null;
+
+create index if not exists payments_transaction_idx on public.payments (transaction_id);
+
+create or replace function public.payments_post_to_ledger()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_txn_id uuid;
+  v_type   transaction_type;
+begin
+  if tg_op = 'DELETE' then
+    if old.transaction_id is not null then
+      delete from public.transactions where id = old.transaction_id;
+    end if;
+    return old;
+  end if;
+
+  v_type := case when new.direction = 'incoming' then 'income' else 'expense' end;
+
+  if new.status = 'paid' and new.account_id is not null then
+
+    if new.transaction_id is null then
+      insert into public.transactions (
+        user_id, workspace_id, account_id, category_id, contact_id,
+        type, status, amount, currency, txn_date,
+        description, payment_method, reference
+      )
+      values (
+        new.user_id, new.workspace_id, new.account_id, new.category_id, new.contact_id,
+        v_type, 'completed', new.amount, coalesce(new.currency, 'INR'),
+        coalesce(new.paid_date, current_date),
+        new.name, new.method, 'payment:' || new.id::text
+      )
+      returning id into v_txn_id;
+
+      new.transaction_id := v_txn_id;
+    else
+      -- Editing a settled payment keeps its ledger row in step. The balance
+      -- trigger on transactions reverses the old shape and applies the new.
+      update public.transactions
+         set account_id     = new.account_id,
+             category_id    = new.category_id,
+             contact_id     = new.contact_id,
+             type           = v_type,
+             amount         = new.amount,
+             txn_date       = coalesce(new.paid_date, txn_date),
+             description    = new.name,
+             payment_method = new.method
+       where id = new.transaction_id;
+    end if;
+
+  elsif new.transaction_id is not null then
+    -- Un-paid, cancelled, or the account was cleared: take it back out.
+    -- Deleting the transaction reverses the balance automatically.
+    delete from public.transactions where id = new.transaction_id;
+    new.transaction_id := null;
+  end if;
+
+  return new;
+end;
+$$;
+
+-- BEFORE, so the row can carry its own transaction_id without a second write.
+-- Fires after payments_derive_status (alphabetical), which fills paid_date.
+drop trigger if exists payments_post_to_ledger on public.payments;
+create trigger payments_post_to_ledger
+  before insert or update on public.payments
+  for each row execute function public.payments_post_to_ledger();
+
+drop trigger if exists payments_unpost_from_ledger on public.payments;
+create trigger payments_unpost_from_ledger
+  after delete on public.payments
+  for each row execute function public.payments_post_to_ledger();
+
+-- ── NOT BACKFILLED ON PURPOSE ────────────────────────────────────────────
+--  Payments already marked paid keep transaction_id NULL and stay out of the
+--  ledger. Posting them now would move real balances, and would double-count
+--  wherever you had already entered the matching transaction by hand.
+--
+--  From here on every newly settled payment posts correctly. To bring an old
+--  one in, open it and save it again — the trigger picks it up.
+--
+--  To review which ones are affected:
+--
+--    select name, amount, paid_date, account_id
+--      from public.payments
+--     where status = 'paid' and transaction_id is null
+--     order by paid_date desc;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §4  GOAL STATUS GOES BOTH WAYS
+--
+--  A goal was promoted to 'achieved' when it reached its target but never
+--  came back to 'active' if the target was raised or the saved figure
+--  corrected downwards — it stayed achieved for ever.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+create or replace function public.goals_derive_status()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.current_amount >= new.target_amount and new.status = 'active' then
+    new.status := 'achieved';
+  elsif new.current_amount < new.target_amount and new.status = 'achieved' then
+    new.status := 'active';
+  end if;
+  return new;
+end;
+$$;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §5  BUDGET SPEND STOPS AT THE END OF THE PERIOD
+--
+--  The spend lateral had a lower bound but no upper one, so a transaction
+--  dated next month was already counted against this month's budget and
+--  showed the bar over-spent before the money had gone.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+create or replace function public.budget_progress(p_scope text default 'combined')
+returns table (
+  id              uuid,
+  name            text,
+  category_name   text,
+  category_color  text,
+  period          budget_period,
+  amount          numeric,
+  spent           numeric,
+  remaining       numeric,
+  percentage      numeric,
+  alert_threshold integer
+)
+language sql
+stable
+security definer
+set search_path = public
+as $fn$
+  select
+    b.id,
+    b.name,
+    coalesce(c.name, 'All categories')                as category_name,
+    coalesce(c.color, '#C8FF00')                      as category_color,
+    b.period,
+    b.amount,
+    coalesce(spent.total, 0)                          as spent,
+    greatest(b.amount - coalesce(spent.total, 0), 0)  as remaining,
+    case when b.amount > 0
+         then round((coalesce(spent.total, 0) / b.amount) * 100, 1)
+         else 0 end                                   as percentage,
+    b.alert_threshold
+  from public.budgets b
+  left join public.categories c on c.id = b.category_id
+  left join lateral (
+    select sum(t.amount) as total
+      from public.transactions t
+     where t.user_id = b.user_id
+       and t.workspace_id = b.workspace_id
+       and t.type = 'expense'
+       and t.status = 'completed'
+       and (b.category_id is null or t.category_id = b.category_id)
+       and t.txn_date >= case b.period
+                           when 'weekly'    then date_trunc('week',    current_date)::date
+                           when 'monthly'   then date_trunc('month',   current_date)::date
+                           when 'quarterly' then date_trunc('quarter', current_date)::date
+                           else                  date_trunc('year',    current_date)::date
+                         end
+       and t.txn_date <  case b.period
+                           when 'weekly'    then (date_trunc('week',    current_date) + interval '1 week')::date
+                           when 'monthly'   then (date_trunc('month',   current_date) + interval '1 month')::date
+                           when 'quarterly' then (date_trunc('quarter', current_date) + interval '3 months')::date
+                           else                  (date_trunc('year',    current_date) + interval '1 year')::date
+                         end
+  ) spent on true
+  where b.user_id = (select auth.uid())
+    and b.is_active
+    and b.workspace_id = any (public.workspace_ids_for_scope(p_scope))
+  order by percentage desc;
+$fn$;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §6  SIGNUP BOOTSTRAP — one primary, cash in both workspaces
+--
+--  Only affects users created from here on. Existing rows are untouched;
+--  §1 and §2 above already brought them into line.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_personal uuid;
+  v_business uuid;
+  v_name     text;
+begin
+  v_name := coalesce(
+    nullif(new.raw_user_meta_data ->> 'full_name', ''),
+    nullif(new.raw_user_meta_data ->> 'name', ''),
+    split_part(coalesce(new.email, 'there'), '@', 1)
+  );
+
+  insert into public.profiles (id, email, full_name, avatar_url)
+  values (
+    new.id,
+    coalesce(new.email, ''),
+    v_name,
+    nullif(new.raw_user_meta_data ->> 'avatar_url', '')
+  )
+  on conflict (id) do nothing;
+
+  insert into public.workspaces (user_id, name, type, is_default, icon, color)
+  values (new.id, 'Personal', 'personal', true, 'user', '#C8FF00')
+  on conflict (user_id, type) do nothing
+  returning id into v_personal;
+
+  if v_personal is null then
+    select id into v_personal
+      from public.workspaces
+     where user_id = new.id and type = 'personal';
+  end if;
+
+  insert into public.workspaces (user_id, name, type, is_default, icon, color)
+  values (new.id, 'Business', 'business', false, 'briefcase', '#A8E600')
+  on conflict (user_id, type) do nothing
+  returning id into v_business;
+
+  if v_business is null then
+    select id into v_business
+      from public.workspaces
+     where user_id = new.id and type = 'business';
+  end if;
+
+  -- Starter accounts. Exactly one is primary — the trigger in §1 would
+  -- collapse them anyway, but flagging one keeps the intent obvious.
+  insert into public.accounts (user_id, workspace_id, name, type, institution, icon, color, is_primary)
+  values
+    (new.id, v_personal, 'Primary Savings',  'savings', 'Add your bank', 'landmark',   '#C8FF00', true),
+    (new.id, v_personal, 'Cash in Hand',     'cash',    null,            'wallet',     '#A8E600', false),
+    (new.id, v_business, 'Business Current', 'bank',    'Add your bank', 'building-2', '#C8FF00', false),
+    (new.id, v_business, 'Cash in Hand',     'cash',    null,            'wallet',     '#A8E600', false);
+
+  insert into public.categories (user_id, workspace_id, name, kind, icon, color, is_system, sort_order)
+  values
+    (new.id, null, 'Salary',             'income',  'banknote',       '#C8FF00', true, 1),
+    (new.id, null, 'Client Revenue',     'income',  'handshake',      '#B6FF00', true, 2),
+    (new.id, null, 'Interest & Dividend','income',  'trending-up',    '#A8E600', true, 3),
+    (new.id, null, 'Other Income',       'income',  'plus-circle',    '#89BF00', true, 4),
+    (new.id, null, 'Office Expenses',    'expense', 'building-2',     '#C8FF00', true, 10),
+    (new.id, null, 'Salaries',           'expense', 'users',          '#A8E600', true, 11),
+    (new.id, null, 'Rent & Utilities',   'expense', 'home',           '#89BF00', true, 12),
+    (new.id, null, 'Marketing',          'expense', 'megaphone',      '#6E9900', true, 13),
+    (new.id, null, 'Travel',             'expense', 'plane',          '#FFB547', true, 14),
+    (new.id, null, 'Software & Tools',   'expense', 'monitor',        '#7DD3FC', true, 15),
+    (new.id, null, 'Food & Dining',      'expense', 'utensils',       '#FF9F6C', true, 16),
+    (new.id, null, 'Shopping',           'expense', 'shopping-bag',   '#FF5C6C', true, 17),
+    (new.id, null, 'Health',             'expense', 'heart-pulse',    '#F472B6', true, 18),
+    (new.id, null, 'Transport',          'expense', 'car',            '#A78BFA', true, 19),
+    (new.id, null, 'Others',             'expense', 'more-horizontal','#6B7280', true, 20),
+    (new.id, null, 'Account Transfer',   'transfer','arrow-left-right','#9CA3AF', true, 30);
+
+  return new;
+exception
+  when others then
+    raise warning 'handle_new_user failed for %: %', new.id, sqlerrm;
+    return new;
+end;
+$$;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §7  DEMO SEED REMOVED
+--
+--  seed_demo_data() opened with nine `delete from … where user_id = auth.uid()`
+--  statements — transactions, invoices, payments, goals, budgets, recurring,
+--  contacts and accounts — before writing its sample book. With real data in
+--  the account, one press of "Load demo data" would have erased all of it.
+--
+--  Dropping the functions means an old cached bundle cannot call them either.
+--  No data is removed here: only the two functions go.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+drop function if exists public.seed_demo_data();
+drop function if exists public.seed_demo_subscriptions();
+
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §8  RUNNERS CATCH UP PROPERLY
+--
+--  Both runners advanced their schedule by exactly one cycle per call, so a
+--  rule that had been due for three months posted a single entry and jumped
+--  its date forward — the other cycles were lost, not deferred. Subscriptions
+--  had it worse: subscriptions_derive rolls any stale renewal date to today
+--  in one hop, so the missed cycles were erased before anything could post
+--  them.
+--
+--  Both now post every cycle that has actually come and gone. Still safe to
+--  call repeatedly: each pass only ever looks at dates already in the past.
+--
+--  These write NEW transactions dated in the past, which will move balances
+--  the first time they run — that is the point, it is money that was always
+--  owed. If a subscription is one you had been entering by hand, switch its
+--  "post to ledger" off before opening the app, or delete the duplicate
+--  entries afterwards from Transactions.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+create or replace function public.run_due_recurring()
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  r       public.recurring_transactions%rowtype;
+  v_count int := 0;
+  v_step  interval;
+  v_due   date;
+  v_guard int;
+begin
+  for r in
+    select * from public.recurring_transactions
+     where user_id = (select auth.uid())
+       and is_active
+       and auto_post
+       and next_run_date <= current_date
+       and (end_date is null or next_run_date <= end_date)
+  loop
+    v_step := case r.frequency
+                when 'daily'     then make_interval(days   => greatest(r.interval_count, 1))
+                when 'weekly'    then make_interval(weeks  => greatest(r.interval_count, 1))
+                when 'biweekly'  then make_interval(weeks  => greatest(r.interval_count, 1) * 2)
+                when 'monthly'   then make_interval(months => greatest(r.interval_count, 1))
+                when 'quarterly' then make_interval(months => greatest(r.interval_count, 1) * 3)
+                else                  make_interval(years  => greatest(r.interval_count, 1))
+              end;
+
+    v_due   := r.next_run_date;
+    v_guard := 0;
+
+    -- Every occurrence that is already in the past, not just the first.
+    -- The guard caps a single call at 400 entries so a rule with an absurd
+    -- start date cannot run away with the transaction log.
+    while v_due <= current_date
+      and (r.end_date is null or v_due <= r.end_date)
+      and v_guard < 400
+    loop
+      insert into public.transactions (
+        user_id, workspace_id, account_id, category_id, contact_id, recurring_id,
+        type, status, amount, currency, txn_date, description, payment_method
+      )
+      values (
+        r.user_id, r.workspace_id, r.account_id, r.category_id, r.contact_id, r.id,
+        r.type, 'completed', r.amount, r.currency, v_due,
+        coalesce(nullif(r.description, ''), r.name), 'Auto — recurring'
+      );
+
+      v_due   := (v_due + v_step)::date;
+      v_guard := v_guard + 1;
+      v_count := v_count + 1;
+    end loop;
+
+    if v_guard > 0 then
+      update public.recurring_transactions
+         set last_run_date = (v_due - v_step)::date,
+             next_run_date = v_due,
+             run_count     = run_count + v_guard
+       where id = r.id;
+    end if;
+  end loop;
+
+  return v_count;
+end;
+$$;
+
+create or replace function public.run_due_subscriptions()
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  s       public.subscriptions%rowtype;
+  v_count int := 0;
+  v_step  interval;
+  v_due   date;
+  v_guard int;
+begin
+  for s in
+    select * from public.subscriptions
+     where user_id = (select auth.uid())
+       and status in ('active', 'trial')
+       and auto_renew
+       and next_renewal_date <= current_date
+       and (ends_on is null or next_renewal_date <= ends_on)
+  loop
+    v_step  := public.subscription_cycle_interval(s.billing_cycle, s.cycle_count);
+    v_due   := s.next_renewal_date;
+    v_guard := 0;
+
+    -- 'lifetime' resolves to a 100-year interval, so the first pass takes the
+    -- date far past today and the loop ends after one charge, as it should.
+    while v_due <= current_date
+      and (s.ends_on is null or v_due <= s.ends_on)
+      and v_guard < 120
+    loop
+      if s.auto_post then
+        insert into public.transactions (
+          user_id, workspace_id, account_id, category_id, contact_id,
+          type, status, amount, currency, txn_date, description, payment_method
+        )
+        values (
+          s.user_id, s.workspace_id, s.account_id, s.category_id, s.contact_id,
+          'expense', 'completed', s.amount, s.currency, v_due,
+          s.name || coalesce(' — ' || s.plan, ''), coalesce(s.payment_method, 'Auto Debit')
+        );
+      end if;
+
+      v_due   := (v_due + v_step)::date;
+      v_guard := v_guard + 1;
+      v_count := v_count + 1;
+    end loop;
+
+    if v_guard > 0 then
+      update public.subscriptions
+         set last_charged_on   = (v_due - v_step)::date,
+             next_renewal_date = v_due
+       where id = s.id;
+    end if;
+  end loop;
+
+  return v_count;
+end;
+$$;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §9  GRANTS
+-- ═══════════════════════════════════════════════════════════════════════════
+
+revoke all on function public.cash_summary(text)                    from public, anon;
+revoke all on function public.cash_activity(text, date, date, integer) from public, anon;
+
+grant execute on function public.cash_summary(text)                    to authenticated;
+grant execute on function public.cash_activity(text, date, date, integer) to authenticated;
+
+-- Re-asserted: these were replaced above, and CREATE OR REPLACE keeps the
+-- existing grants, but stating them means a hand-dropped function comes back
+-- with the right access.
+grant execute on function public.run_due_recurring()     to authenticated;
+grant execute on function public.run_due_subscriptions() to authenticated;
+grant execute on function public.generate_reminders(uuid) to authenticated;
+
+commit;
+
+
+-- ============================================================================
+-- ============================================================================
+--
+--  PART 8 — SHARED ACCOUNTS · SUBSCRIPTION AUTOMATION · REMINDERS EVERYWHERE
+--
+--  Was migration_003_shared_and_automation.sql.
+--
+--  §1 lets an account (or contact) belong to BOTH workspaces instead of one, by
+--     allowing workspace_id to be NULL — exactly how categories have always
+--     worked. Existing rows keep the workspace they have.
+--  §4 makes the Personal / Business split figures report the truth at all times
+--     instead of echoing whichever scope you were looking at.
+--  §5 gives every subscription a mirrored row on the Recurring page. The mirror
+--     never posts to the ledger, so nothing can be charged twice.
+--
+--  The enum label this part depends on is added in Part 0, above, which commits
+--  before this transaction opens.
+--
+-- ============================================================================
+-- ============================================================================
+
+begin;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §1  SHARED ACCOUNTS AND CONTACTS  — "use in both"
+--
+--  A bank account you use for personal spending AND for the business is one
+--  real account holding one real balance. Modelling it as two rows means two
+--  balances that drift apart and a Combined total that counts the same money
+--  twice.
+--
+--  So workspace_id becomes nullable on accounts and contacts, and NULL reads
+--  as "belongs to both". Every transaction written against a shared account
+--  still carries its own workspace_id, so Personal and Business reporting
+--  stays completely separate — only the container is shared.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+alter table public.accounts alter column workspace_id drop not null;
+alter table public.contacts alter column workspace_id drop not null;
+
+comment on column public.accounts.workspace_id is
+  'NULL means the account is shared by Personal and Business. Its balance is '
+  'counted once in Combined, and it is offered in both workspaces'' pickers.';
+
+comment on column public.contacts.workspace_id is
+  'NULL means the contact is visible from Personal and Business alike.';
+
+-- Partial indexes so "give me the shared ones" stays cheap.
+create index if not exists accounts_shared_idx on public.accounts (user_id)
+  where workspace_id is null;
+create index if not exists contacts_shared_idx on public.contacts (user_id)
+  where workspace_id is null;
+
+-- ── RLS: accept NULL as a legal workspace ────────────────────────────────
+--  The generic policy block in the base schema builds
+--  `owns_workspace(workspace_id)`, which is NULL-in/NULL-out — and a WITH
+--  CHECK that evaluates to NULL rejects the row. Without this, saving a
+--  shared account would fail with a policy violation.
+do $$
+declare t text;
+begin
+  foreach t in array array['accounts', 'contacts'] loop
+    execute format('drop policy if exists "%1$s_insert_own" on public.%1$I;', t);
+    execute format($p$
+      create policy "%1$s_insert_own" on public.%1$I
+        for insert to authenticated
+        with check (
+          user_id = (select auth.uid())
+          and (workspace_id is null or public.owns_workspace(workspace_id))
+        );
+    $p$, t);
+
+    execute format('drop policy if exists "%1$s_update_own" on public.%1$I;', t);
+    execute format($p$
+      create policy "%1$s_update_own" on public.%1$I
+        for update to authenticated
+        using (user_id = (select auth.uid()))
+        with check (
+          user_id = (select auth.uid())
+          and (workspace_id is null or public.owns_workspace(workspace_id))
+        );
+    $p$, t);
+  end loop;
+end $$;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §2  SCOPE HELPER
+--
+--  Every "is this row in the scope I am looking at?" test now has to treat a
+--  NULL workspace as in-scope. One function so the rule cannot be spelled
+--  three different ways in three different RPCs.
+-- ═══════════════════════════════════════════════════════════════════════════
+create or replace function public.in_scope(p_workspace_id uuid, p_scope_ids uuid[])
+returns boolean
+language sql
+immutable
+parallel safe
+as $$
+  select p_workspace_id is null or p_workspace_id = any (p_scope_ids);
+$$;
+
+comment on function public.in_scope(uuid, uuid[]) is
+  'True when a row belongs to the scope, or is shared (workspace_id NULL).';
+
+revoke all on function public.in_scope(uuid, uuid[]) from public, anon;
+grant execute on function public.in_scope(uuid, uuid[]) to authenticated;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §3  ONE PRIMARY ACCOUNT — unchanged rule, now NULL-aware
+--
+--  The trigger from migration 002 clears the flag across the whole user, not
+--  per workspace, so a shared account can hold it. Re-declared here only so
+--  this file can be run against a database that skipped 002's trigger.
+-- ═══════════════════════════════════════════════════════════════════════════
+create or replace function public.accounts_enforce_single_primary()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.accounts
+     set is_primary = false
+   where user_id = new.user_id
+     and id <> new.id
+     and is_primary;
+  return null;
+end;
+$$;
+
+drop trigger if exists accounts_single_primary on public.accounts;
+create trigger accounts_single_primary
+  after insert or update of is_primary on public.accounts
+  for each row
+  when (new.is_primary)
+  execute function public.accounts_enforce_single_primary();
+
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §4  DASHBOARD SUMMARY — shared-aware, and honest about the split
+--
+--  TWO FIXES HERE.
+--
+--  1. Shared accounts now count toward whichever scope you are in, and are
+--     counted exactly ONCE in Combined.
+--
+--  2. `personal_balance` and `business_balance` used to be filtered by the
+--     scope being viewed. In Personal they reported Business = 0; in Business
+--     the Personal figure came back 0; and in Combined both rows echoed the
+--     combined total. Every surface that prints a row literally labelled
+--     "Business" was therefore printing something else.
+--
+--     Those two keys are now computed across ALL workspaces the user owns,
+--     independent of p_scope. A row labelled Business shows Business money,
+--     always. `total_balance` is unchanged — it still follows the scope,
+--     because that is exactly what the headline card is for.
+-- ═══════════════════════════════════════════════════════════════════════════
+create or replace function public.dashboard_summary(p_scope text default 'combined')
+returns json
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_uid            uuid := (select auth.uid());
+  v_ws             uuid[];
+  v_month_start    date := date_trunc('month', current_date)::date;
+  v_prev_start     date := (date_trunc('month', current_date) - interval '1 month')::date;
+
+  v_total          numeric := 0;
+  v_personal       numeric := 0;
+  v_business       numeric := 0;
+  v_shared         numeric := 0;
+
+  v_income_m       numeric := 0;
+  v_expense_m      numeric := 0;
+  v_income_p       numeric := 0;
+  v_expense_p      numeric := 0;
+
+  v_recv           numeric := 0;
+  v_recv_count     int     := 0;
+  v_upcoming       numeric := 0;
+  v_upcoming_count int     := 0;
+
+  v_net_prev       numeric := 0;
+  v_growth         numeric := 0;
+begin
+  if v_uid is null then
+    return json_build_object('error', 'not authenticated');
+  end if;
+
+  v_ws := public.workspace_ids_for_scope(p_scope);
+
+  -- Scoped headline balance. A shared account has no workspace row to join
+  -- to, so this must not inner-join workspaces or it would drop silently.
+  select coalesce(sum(a.current_balance), 0)
+    into v_total
+  from public.accounts a
+  where a.user_id = v_uid
+    and a.is_active
+    and public.in_scope(a.workspace_id, v_ws);
+
+  -- The split, deliberately NOT scope-filtered. See the note above.
+  select
+    coalesce(sum(a.current_balance) filter (where w.type = 'personal'), 0),
+    coalesce(sum(a.current_balance) filter (where w.type = 'business'), 0),
+    coalesce(sum(a.current_balance) filter (where a.workspace_id is null), 0)
+  into v_personal, v_business, v_shared
+  from public.accounts a
+  left join public.workspaces w on w.id = a.workspace_id
+  where a.user_id = v_uid
+    and a.is_active;
+
+  -- This month vs last month flows.
+  select
+    coalesce(sum(t.amount) filter (where t.type = 'income'  and t.txn_date >= v_month_start), 0),
+    coalesce(sum(t.amount) filter (where t.type = 'expense' and t.txn_date >= v_month_start), 0),
+    coalesce(sum(t.amount) filter (where t.type = 'income'  and t.txn_date >= v_prev_start and t.txn_date < v_month_start), 0),
+    coalesce(sum(t.amount) filter (where t.type = 'expense' and t.txn_date >= v_prev_start and t.txn_date < v_month_start), 0)
+  into v_income_m, v_expense_m, v_income_p, v_expense_p
+  from public.transactions t
+  where t.user_id = v_uid
+    and t.status = 'completed'
+    and t.workspace_id = any (v_ws)
+    and t.txn_date >= v_prev_start;
+
+  select coalesce(sum(i.balance_due), 0), count(*)
+    into v_recv, v_recv_count
+  from public.invoices i
+  where i.user_id = v_uid
+    and i.workspace_id = any (v_ws)
+    and i.status in ('sent', 'partial', 'overdue');
+
+  select coalesce(sum(p.amount), 0), count(*)
+    into v_upcoming, v_upcoming_count
+  from public.payments p
+  where p.user_id = v_uid
+    and p.workspace_id = any (v_ws)
+    and p.direction = 'outgoing'
+    and p.status in ('upcoming', 'pending', 'overdue');
+
+  v_net_prev := v_total - (v_income_m - v_expense_m);
+  if v_net_prev <> 0 then
+    v_growth := round(((v_total - v_net_prev) / abs(v_net_prev)) * 100, 1);
+  end if;
+
+  return json_build_object(
+    'scope',                 lower(coalesce(p_scope, 'combined')),
+    'total_balance',         v_total,
+    -- True figures, whatever scope is active.
+    'personal_balance',      v_personal,
+    'business_balance',      v_business,
+    'shared_balance',        v_shared,
+    'has_shared',            (v_shared <> 0),
+    'net_worth',             v_total,
+    'net_worth_growth',      v_growth,
+    'income_month',          v_income_m,
+    'expense_month',         v_expense_m,
+    'income_prev_month',     v_income_p,
+    'expense_prev_month',    v_expense_p,
+    'income_growth',         case when v_income_p > 0
+                                  then round(((v_income_m - v_income_p) / v_income_p) * 100, 1)
+                                  else 0 end,
+    'expense_growth',        case when v_expense_p > 0
+                                  then round(((v_expense_m - v_expense_p) / v_expense_p) * 100, 1)
+                                  else 0 end,
+    'savings',               v_income_m - v_expense_m,
+    'savings_rate',          case when v_income_m > 0
+                                  then round(((v_income_m - v_expense_m) / v_income_m) * 100, 1)
+                                  else 0 end,
+    'pending_receivables',   v_recv,
+    'receivable_count',      v_recv_count,
+    'upcoming_payments',     v_upcoming,
+    'upcoming_count',        v_upcoming_count
+  );
+end;
+$$;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §5  CASH — a shared cash account counts in both workspaces
+-- ═══════════════════════════════════════════════════════════════════════════
+create or replace function public.cash_summary(p_scope text default 'combined')
+returns json
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_uid         uuid := (select auth.uid());
+  v_ws          uuid[];
+  v_month_start date := date_trunc('month', current_date)::date;
+
+  v_in_hand     numeric := 0;
+  v_accounts    int     := 0;
+  v_spent_m     numeric := 0;
+  v_spent_all   numeric := 0;
+  v_recv_m      numeric := 0;
+  v_last        date;
+  v_untracked   numeric := 0;
+  v_untracked_n int     := 0;
+begin
+  if v_uid is null then
+    return json_build_object('error', 'not authenticated');
+  end if;
+
+  v_ws := public.workspace_ids_for_scope(p_scope);
+
+  select coalesce(sum(a.current_balance), 0), count(*)
+    into v_in_hand, v_accounts
+    from public.accounts a
+   where a.user_id = v_uid
+     and a.is_active
+     and a.type = 'cash'
+     and public.in_scope(a.workspace_id, v_ws);
+
+  -- Money that actually left or entered a cash account. Filtered on the
+  -- transaction workspace, which stays concrete even when the cash account
+  -- behind it is shared.
+  select
+    coalesce(sum(t.amount) filter (
+      where t.type = 'expense' and t.txn_date >= v_month_start), 0),
+    coalesce(sum(t.amount) filter (where t.type = 'expense'), 0),
+    coalesce(sum(t.amount) filter (
+      where t.type = 'income' and t.txn_date >= v_month_start), 0),
+    max(t.txn_date)
+  into v_spent_m, v_spent_all, v_recv_m, v_last
+  from public.transactions t
+  join public.accounts a on a.id = t.account_id
+ where t.user_id = v_uid
+   and t.status = 'completed'
+   and a.type = 'cash'
+   and t.workspace_id = any (v_ws);
+
+  select coalesce(sum(t.amount), 0), count(*)
+    into v_untracked, v_untracked_n
+    from public.transactions t
+   where t.user_id = v_uid
+     and t.status = 'completed'
+     and t.type = 'expense'
+     and lower(coalesce(t.payment_method, '')) = 'cash'
+     and t.workspace_id = any (v_ws)
+     and (
+       t.account_id is null
+       or not exists (
+         select 1 from public.accounts a
+          where a.id = t.account_id and a.type = 'cash'
+       )
+     );
+
+  return json_build_object(
+    'cash_in_hand',     v_in_hand,
+    'cash_accounts',    v_accounts,
+    'spent_month',      v_spent_m,
+    'spent_total',      v_spent_all,
+    'received_month',   v_recv_m,
+    'last_movement',    v_last,
+    'untracked_amount', v_untracked,
+    'untracked_count',  v_untracked_n
+  );
+end;
+$$;
+
+
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §6  CASH ACTIVITY — same shared-aware account list
+--
+--  Identical signature and columns to migration 002. The only change is the
+--  scope test on the cash-account list, so a shared cash account shows its
+--  movements in Personal and in Business rather than in neither.
+-- ═══════════════════════════════════════════════════════════════════════════
+create or replace function public.cash_activity(
+  p_scope text    default 'combined',
+  p_from  date    default null,
+  p_to    date    default null,
+  p_limit integer default 200
+)
+returns table (
+  id              uuid,
+  txn_date        date,
+  description     text,
+  type            transaction_type,
+  amount          numeric,
+  flow            text,           -- 'in' | 'out'
+  account_id      uuid,
+  account_name    text,
+  category_name   text,
+  category_color  text,
+  payment_method  text,
+  workspace_id    uuid,
+  on_cash_account boolean
+)
+language sql
+stable
+security definer
+set search_path = public
+as $fn$
+  with cash_accts as (
+    select a.id, a.name
+      from public.accounts a
+     where a.user_id = (select auth.uid())
+       and a.type = 'cash'
+       and public.in_scope(
+             a.workspace_id,
+             public.workspace_ids_for_scope(p_scope)
+           )
+  ),
+  moves as (
+    -- Cash going out: spent from a cash account, or moved off it.
+    select t.id, t.txn_date, t.description, t.type, t.amount, 'out'::text as flow,
+           t.account_id, ca.name as account_name, t.category_id,
+           t.payment_method, t.workspace_id, true as on_cash_account
+      from public.transactions t
+      join cash_accts ca on ca.id = t.account_id
+     where t.status = 'completed'
+       and t.type in ('expense', 'transfer')
+
+    union all
+
+    -- Cash coming in: received into a cash account.
+    select t.id, t.txn_date, t.description, t.type, t.amount, 'in',
+           t.account_id, ca.name, t.category_id,
+           t.payment_method, t.workspace_id, true
+      from public.transactions t
+      join cash_accts ca on ca.id = t.account_id
+     where t.status = 'completed'
+       and t.type = 'income'
+
+    union all
+
+    -- Cash withdrawn from a bank into a cash account.
+    select t.id, t.txn_date, t.description, t.type, t.amount, 'in',
+           t.to_account_id, ca.name, t.category_id,
+           t.payment_method, t.workspace_id, true
+      from public.transactions t
+      join cash_accts ca on ca.id = t.to_account_id
+     where t.status = 'completed'
+       and t.type = 'transfer'
+
+    union all
+
+    -- Paid in cash, but booked against a non-cash account.
+    select t.id, t.txn_date, t.description, t.type, t.amount, 'out',
+           t.account_id, a.name, t.category_id,
+           t.payment_method, t.workspace_id, false
+      from public.transactions t
+      left join public.accounts a on a.id = t.account_id
+     where t.user_id = (select auth.uid())
+       and t.status = 'completed'
+       and t.type = 'expense'
+       and lower(coalesce(t.payment_method, '')) = 'cash'
+       and t.workspace_id = any (public.workspace_ids_for_scope(p_scope))
+       and not exists (
+         select 1 from cash_accts ca where ca.id = t.account_id
+       )
+  )
+  select
+    m.id,
+    m.txn_date,
+    m.description,
+    m.type,
+    m.amount,
+    m.flow,
+    m.account_id,
+    m.account_name,
+    c.name  as category_name,
+    c.color as category_color,
+    m.payment_method,
+    m.workspace_id,
+    m.on_cash_account
+  from moves m
+  left join public.categories c on c.id = m.category_id
+  where (p_from is null or m.txn_date >= p_from)
+    and (p_to   is null or m.txn_date <= p_to)
+  order by m.txn_date desc, m.id desc
+  limit greatest(coalesce(p_limit, 200), 1);
+$fn$;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §7  SUBSCRIPTION  →  RECURRING MIRROR
+--
+--  A subscription IS a recurring charge, so it now appears on the Recurring
+--  page automatically instead of having to be typed in twice.
+--
+--  ONLY ONE OF THE TWO EVER POSTS TO THE LEDGER.
+--  The subscription owns the posting (its own `auto_post` flag, applied by
+--  run_due_subscriptions). The mirror is the visible schedule: it is forced
+--  to auto_post = false on every sync, and run_due_recurring skips any row
+--  carrying a subscription_id outright. Two independent guards, because a
+--  double-posted charge is the one failure mode here that costs real money.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+alter table public.recurring_transactions
+  add column if not exists subscription_id uuid
+    references public.subscriptions(id) on delete cascade;
+
+create unique index if not exists recurring_subscription_unique
+  on public.recurring_transactions (subscription_id)
+  where subscription_id is not null;
+
+comment on column public.recurring_transactions.subscription_id is
+  'Set when this row mirrors a subscription. Mirrors never post to the '
+  'ledger — the subscription does. Edit the subscription, not this row.';
+
+-- Maps a billing cycle onto the recurrence vocabulary. `half_yearly` has no
+-- direct equivalent, so it becomes "every 6 months".
+create or replace function public.billing_cycle_as_recurrence(
+  p_cycle billing_cycle,
+  p_count integer
+)
+returns table (frequency recurrence_frequency, interval_count integer)
+language sql
+immutable
+as $$
+  select
+    case p_cycle
+      when 'weekly'      then 'weekly'::recurrence_frequency
+      when 'monthly'     then 'monthly'::recurrence_frequency
+      when 'quarterly'   then 'quarterly'::recurrence_frequency
+      when 'half_yearly' then 'monthly'::recurrence_frequency
+      when 'yearly'      then 'yearly'::recurrence_frequency
+      else 'monthly'::recurrence_frequency
+    end,
+    greatest(coalesce(p_count, 1), 1)
+      * case when p_cycle = 'half_yearly' then 6 else 1 end;
+$$;
+
+create or replace function public.subscriptions_sync_recurring()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_freq     recurrence_frequency;
+  v_interval integer;
+  v_active   boolean;
+  v_existing uuid;
+begin
+  -- A lifetime purchase does not recur, so it gets no mirror.
+  if new.billing_cycle = 'lifetime' then
+    delete from public.recurring_transactions where subscription_id = new.id;
+    return null;
+  end if;
+
+  select r.frequency, r.interval_count
+    into v_freq, v_interval
+    from public.billing_cycle_as_recurrence(new.billing_cycle, new.cycle_count) r;
+
+  -- The mirror is live only while the subscription itself is.
+  v_active := new.status in ('active', 'trial') and new.auto_renew;
+
+  select id into v_existing
+    from public.recurring_transactions
+   where subscription_id = new.id;
+
+  if v_existing is null then
+    insert into public.recurring_transactions (
+      user_id, workspace_id, account_id, category_id, contact_id,
+      subscription_id, name, type, amount, currency, description,
+      frequency, interval_count, start_date, next_run_date, end_date,
+      auto_post, is_active
+    )
+    values (
+      new.user_id, new.workspace_id, new.account_id, new.category_id, new.contact_id,
+      new.id, new.name, 'expense', new.amount, new.currency,
+      coalesce(nullif(new.plan, ''), new.vendor, new.name),
+      v_freq, v_interval, new.started_on, new.next_renewal_date, new.ends_on,
+      false,        -- never. The subscription posts, not the mirror.
+      v_active
+    );
+  else
+    update public.recurring_transactions
+       set workspace_id   = new.workspace_id,
+           account_id     = new.account_id,
+           category_id    = new.category_id,
+           contact_id     = new.contact_id,
+           name           = new.name,
+           amount         = new.amount,
+           currency       = new.currency,
+           description    = coalesce(nullif(new.plan, ''), new.vendor, new.name),
+           frequency      = v_freq,
+           interval_count = v_interval,
+           next_run_date  = new.next_renewal_date,
+           end_date       = new.ends_on,
+           auto_post      = false,
+           is_active      = v_active
+     where id = v_existing;
+  end if;
+
+  return null;
+end;
+$$;
+
+drop trigger if exists subscriptions_sync_recurring on public.subscriptions;
+create trigger subscriptions_sync_recurring
+  after insert or update on public.subscriptions
+  for each row
+  execute function public.subscriptions_sync_recurring();
+
+-- Backfill: every subscription that already exists gets its mirror now.
+--
+-- Done as a direct INSERT rather than a no-op UPDATE on subscriptions. An
+-- UPDATE would have fired the existing BEFORE trigger `subscriptions_derive`,
+-- which rolls `next_renewal_date` forward past any date already in the past —
+-- so a renewal that was due but not yet posted would have been stepped over
+-- and its charge would never have reached the ledger. This touches
+-- recurring_transactions only; no subscription row is modified.
+insert into public.recurring_transactions (
+  user_id, workspace_id, account_id, category_id, contact_id,
+  subscription_id, name, type, amount, currency, description,
+  frequency, interval_count, start_date, next_run_date, end_date,
+  auto_post, is_active
+)
+select
+  s.user_id, s.workspace_id, s.account_id, s.category_id, s.contact_id,
+  s.id, s.name, 'expense', s.amount, s.currency,
+  coalesce(nullif(s.plan, ''), s.vendor, s.name),
+  m.frequency, m.interval_count, s.started_on, s.next_renewal_date, s.ends_on,
+  false,                                             -- the mirror never posts
+  (s.status in ('active', 'trial') and s.auto_renew)
+from public.subscriptions s
+cross join lateral public.billing_cycle_as_recurrence(s.billing_cycle, s.cycle_count) m
+where s.billing_cycle <> 'lifetime'
+  and not exists (
+    select 1 from public.recurring_transactions r where r.subscription_id = s.id
+  );
+
+
+-- ── run_due_recurring: never post a mirror ───────────────────────────────
+create or replace function public.run_due_recurring()
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  r        public.recurring_transactions%rowtype;
+  v_count  int := 0;
+  v_step   interval;
+begin
+  for r in
+    select * from public.recurring_transactions
+     where user_id = (select auth.uid())
+       and is_active
+       and auto_post
+       -- Second guard against a double charge. run_due_subscriptions owns
+       -- anything that came from a subscription.
+       and subscription_id is null
+       and next_run_date <= current_date
+       and (end_date is null or next_run_date <= end_date)
+  loop
+    insert into public.transactions (
+      user_id, workspace_id, account_id, category_id, contact_id, recurring_id,
+      type, status, amount, currency, txn_date, description, payment_method
+    )
+    values (
+      r.user_id, r.workspace_id, r.account_id, r.category_id, r.contact_id, r.id,
+      r.type, 'completed', r.amount, r.currency, r.next_run_date,
+      coalesce(nullif(r.description, ''), r.name), 'Auto — recurring'
+    );
+
+    v_step := case r.frequency
+                when 'daily'     then make_interval(days  => r.interval_count)
+                when 'weekly'    then make_interval(weeks => r.interval_count)
+                when 'biweekly'  then make_interval(weeks => r.interval_count * 2)
+                when 'monthly'   then make_interval(months => r.interval_count)
+                when 'quarterly' then make_interval(months => r.interval_count * 3)
+                else                  make_interval(years => r.interval_count)
+              end;
+
+    update public.recurring_transactions
+       set last_run_date = next_run_date,
+           next_run_date = (next_run_date + v_step)::date,
+           run_count     = run_count + 1
+     where id = r.id;
+
+    v_count := v_count + 1;
+  end loop;
+
+  return v_count;
+end;
+$$;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §8  REMINDERS FOR EVERYTHING
+--
+--  THE BEHAVIOUR CHANGE WORTH READING.
+--
+--  The old generator only created a reminder once the due date was already
+--  inside the lead window — add a subscription renewing in 30 days and the
+--  Reminders page stayed empty for 27 of them, which reads as "it did not
+--  work". It also meant a missed nightly run could skip a nudge entirely.
+--
+--  Reminders are now created as soon as the record exists, anywhere in the
+--  next 400 days, with `remind_at` set to the moment the email should go out
+--  (lead days before the due date, 09:00). Nothing is emailed earlier than
+--  before — pending_reminder_batch still only picks up rows whose remind_at
+--  has arrived — but the nudge is visible and auditable from the start.
+--
+--  `dedupe_key` keeps it idempotent, so this is still safe to run as often
+--  as you like.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- When an email should leave: lead days before the due date, at 09:00, and
+-- never in the past (an overdue item goes out on the next run).
+create or replace function public.reminder_send_at(p_due date, p_lead integer)
+returns timestamptz
+language sql
+stable
+as $$
+  select greatest(
+    now(),
+    ((p_due - greatest(coalesce(p_lead, 0), 0))::timestamptz + interval '9 hours')
+  );
+$$;
+
+create or replace function public.generate_reminders(p_user uuid default null)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid     uuid := coalesce(p_user, (select auth.uid()));
+  v_lead    int;
+  v_made    int := 0;
+  v_horizon int := 400;   -- far enough for an annual renewal, not forever
+  r         record;
+begin
+  if v_uid is null then
+    return 0;
+  end if;
+
+  -- This is SECURITY DEFINER and granted to `authenticated`, so p_user has to
+  -- be checked: without this, any signed-in user could pass someone else's id.
+  -- A NULL auth.uid() means the caller is the service role or a trigger
+  -- running under the definer, which is allowed to name any user.
+  if (select auth.uid()) is not null and v_uid <> (select auth.uid()) then
+    raise exception 'generate_reminders: cannot generate reminders for another user';
+  end if;
+
+  select coalesce(reminder_lead_days, 3) into v_lead
+    from public.profiles where id = v_uid;
+  v_lead := coalesce(v_lead, 3);
+
+  -- ── Subscription renewals ───────────────────────────────────────────────
+  for r in
+    select s.*, coalesce(s.reminder_days_before, v_lead) as lead
+      from public.subscriptions s
+     where s.user_id = v_uid
+       and s.status in ('active', 'trial')
+       and s.remind_by_email
+       and s.next_renewal_date >= current_date
+       and s.next_renewal_date <= current_date + v_horizon
+  loop
+    insert into public.reminders (
+      user_id, workspace_id, kind, subscription_id, title, body,
+      amount, currency, due_on, remind_at, channel, dedupe_key
+    )
+    values (
+      r.user_id, r.workspace_id, 'subscription', r.id,
+      r.name || ' renews on ' || to_char(r.next_renewal_date, 'DD Mon YYYY'),
+      coalesce(r.vendor, r.name) ||
+        case when r.plan is not null then ' · ' || r.plan else '' end,
+      r.amount, r.currency, r.next_renewal_date,
+      public.reminder_send_at(r.next_renewal_date, r.lead), 'email',
+      'sub:' || r.id::text || ':' || r.next_renewal_date::text
+    )
+    on conflict (user_id, dedupe_key) do nothing;
+
+    if found then v_made := v_made + 1; end if;
+  end loop;
+
+  -- ── Trials about to convert ─────────────────────────────────────────────
+  for r in
+    select s.*, coalesce(s.reminder_days_before, v_lead) as lead
+      from public.subscriptions s
+     where s.user_id = v_uid
+       and s.status = 'trial'
+       and s.trial_ends_on is not null
+       and s.trial_ends_on >= current_date
+       and s.trial_ends_on <= current_date + v_horizon
+  loop
+    insert into public.reminders (
+      user_id, workspace_id, kind, subscription_id, title, body,
+      amount, currency, due_on, remind_at, channel, dedupe_key
+    )
+    values (
+      r.user_id, r.workspace_id, 'subscription', r.id,
+      'Free trial for ' || r.name || ' ends on ' || to_char(r.trial_ends_on, 'DD Mon YYYY'),
+      'Cancel before this date to avoid being charged.',
+      r.amount, r.currency, r.trial_ends_on,
+      public.reminder_send_at(r.trial_ends_on, r.lead), 'email',
+      'trial:' || r.id::text || ':' || r.trial_ends_on::text
+    )
+    on conflict (user_id, dedupe_key) do nothing;
+
+    if found then v_made := v_made + 1; end if;
+  end loop;
+
+  -- ── Scheduled payments falling due ──────────────────────────────────────
+  for r in
+    select * from public.payments
+     where user_id = v_uid
+       and status in ('upcoming', 'pending', 'overdue')
+       and due_date between (current_date - 30) and (current_date + v_horizon)
+  loop
+    insert into public.reminders (
+      user_id, workspace_id, kind, payment_id, title, body,
+      amount, currency, due_on, remind_at, channel, dedupe_key
+    )
+    values (
+      r.user_id, r.workspace_id, 'payment', r.id,
+      case when r.due_date < current_date
+           then r.name || ' is overdue'
+           else r.name || ' is due on ' || to_char(r.due_date, 'DD Mon YYYY') end,
+      coalesce(r.method, 'Scheduled payment'),
+      r.amount, r.currency, r.due_date,
+      public.reminder_send_at(r.due_date, v_lead), 'email',
+      'pay:' || r.id::text || ':' || r.due_date::text
+    )
+    on conflict (user_id, dedupe_key) do nothing;
+
+    if found then v_made := v_made + 1; end if;
+  end loop;
+
+  -- ── Invoices going overdue ──────────────────────────────────────────────
+  for r in
+    select i.*, c.name as customer
+      from public.invoices i
+      left join public.contacts c on c.id = i.contact_id
+     where i.user_id = v_uid
+       and i.status in ('sent', 'partial', 'overdue')
+       and i.due_date between (current_date - 30) and (current_date + v_horizon)
+  loop
+    insert into public.reminders (
+      user_id, workspace_id, kind, invoice_id, title, body,
+      amount, currency, due_on, remind_at, channel, dedupe_key
+    )
+    values (
+      r.user_id, r.workspace_id, 'invoice', r.id,
+      'Invoice ' || r.invoice_number ||
+        case when r.due_date < current_date then ' is overdue' else ' is due soon' end,
+      coalesce(r.customer, 'Customer'),
+      r.balance_due, r.currency, r.due_date,
+      public.reminder_send_at(r.due_date, v_lead), 'email',
+      'inv:' || r.id::text || ':' || r.due_date::text
+    )
+    on conflict (user_id, dedupe_key) do nothing;
+
+    if found then v_made := v_made + 1; end if;
+  end loop;
+
+  -- ── Goals: the target date approaching ──────────────────────────────────
+  for r in
+    select * from public.financial_goals
+     where user_id = v_uid
+       and status = 'active'
+       and target_date is not null
+       and target_date >= current_date
+       and target_date <= current_date + v_horizon
+  loop
+    insert into public.reminders (
+      user_id, workspace_id, kind, goal_id, title, body,
+      amount, currency, due_on, remind_at, channel, dedupe_key
+    )
+    values (
+      r.user_id, r.workspace_id, 'goal', r.id,
+      r.name || ' is due on ' || to_char(r.target_date, 'DD Mon YYYY'),
+      'Saved so far: ' || round(
+        case when r.target_amount > 0
+             then (r.current_amount / r.target_amount) * 100
+             else 0 end, 0) || '% of the target.',
+      greatest(r.target_amount - r.current_amount, 0), 'INR', r.target_date,
+      public.reminder_send_at(r.target_date, v_lead), 'email',
+      'goal-due:' || r.id::text || ':' || r.target_date::text
+    )
+    on conflict (user_id, dedupe_key) do nothing;
+
+    if found then v_made := v_made + 1; end if;
+  end loop;
+
+  -- ── Goals: next monthly contribution nudge ──────────────────────────────
+  --  One row at a time — the following month is created after this one has
+  --  been sent, so the Reminders page never fills up with a year of nudges.
+  for r in
+    select * from public.financial_goals
+     where user_id = v_uid
+       and status = 'active'
+       and current_amount < target_amount
+  loop
+    insert into public.reminders (
+      user_id, workspace_id, kind, goal_id, title, body,
+      amount, currency, due_on, remind_at, channel, dedupe_key
+    )
+    values (
+      r.user_id, r.workspace_id, 'goal', r.id,
+      'Put something towards ' || r.name,
+      'You are ' || to_char(greatest(r.target_amount - r.current_amount, 0), 'FM999,999,999')
+        || ' away from the target.',
+      greatest(r.target_amount - r.current_amount, 0), 'INR',
+      (date_trunc('month', current_date) + interval '1 month')::date,
+      (date_trunc('month', current_date) + interval '1 month')::timestamptz
+        + interval '9 hours',
+      'email',
+      'goal-month:' || r.id::text || ':' ||
+        to_char(date_trunc('month', current_date) + interval '1 month', 'YYYY-MM')
+    )
+    on conflict (user_id, dedupe_key) do nothing;
+
+    if found then v_made := v_made + 1; end if;
+  end loop;
+
+  -- ── Budgets: threshold and overspend alerts ─────────────────────────────
+  --  Reactive, not scheduled: the row appears at the moment the line is
+  --  crossed, so remind_at is now. Keyed by period start, so next month
+  --  starts clean.
+  for r in
+    select
+      b.*,
+      case b.period
+        when 'weekly'    then date_trunc('week', current_date)::date
+        when 'monthly'   then date_trunc('month', current_date)::date
+        when 'quarterly' then date_trunc('quarter', current_date)::date
+        else date_trunc('year', current_date)::date
+      end as period_start,
+      coalesce(spent.total, 0) as spent
+    from public.budgets b
+    left join lateral (
+      select sum(t.amount) as total
+        from public.transactions t
+       where t.user_id = b.user_id
+         and t.workspace_id = b.workspace_id
+         and t.type = 'expense'
+         and t.status = 'completed'
+         and (b.category_id is null or t.category_id = b.category_id)
+         and t.txn_date >= case b.period
+                             when 'weekly'    then date_trunc('week', current_date)::date
+                             when 'monthly'   then date_trunc('month', current_date)::date
+                             when 'quarterly' then date_trunc('quarter', current_date)::date
+                             else date_trunc('year', current_date)::date
+                           end
+    ) spent on true
+    where b.user_id = v_uid
+      and b.is_active
+      and b.amount > 0
+      and coalesce(spent.total, 0) >= b.amount * (b.alert_threshold / 100.0)
+  loop
+    insert into public.reminders (
+      user_id, workspace_id, kind, title, body,
+      amount, currency, due_on, remind_at, channel, dedupe_key
+    )
+    values (
+      r.user_id, r.workspace_id, 'budget',
+      case when r.spent >= r.amount
+           then r.name || ' budget is spent'
+           else r.name || ' budget is at ' ||
+                round((r.spent / r.amount) * 100, 0) || '%' end,
+      'Spent ' || to_char(r.spent, 'FM999,999,999') ||
+        ' of ' || to_char(r.amount, 'FM999,999,999') ||
+        ' this ' || r.period::text || ' period.',
+      r.spent, 'INR', null, now(), 'email',
+      'budget:' || r.id::text || ':' || r.period_start::text || ':' ||
+        case when r.spent >= r.amount then 'over' else 'threshold' end
+    )
+    on conflict (user_id, dedupe_key) do nothing;
+
+    if found then v_made := v_made + 1; end if;
+  end loop;
+
+  return v_made;
+end;
+$$;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §9  AUTOMATIC — the moment you save the record
+--
+--  Until now the generator only ran once a session from the browser, so a
+--  record created afterwards had no reminder until the next day. Each source
+--  table now nudges the generator itself. It is idempotent and keyed, so the
+--  extra calls cost a scan, never a duplicate.
+-- ═══════════════════════════════════════════════════════════════════════════
+create or replace function public.touch_reminders()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  perform public.generate_reminders(new.user_id);
+  return null;
+end;
+$$;
+
+do $$
+declare t text;
+begin
+  foreach t in array array[
+    'subscriptions', 'payments', 'invoices', 'financial_goals', 'budgets'
+  ] loop
+    execute format('drop trigger if exists %1$s_touch_reminders on public.%1$I;', t);
+    execute format($p$
+      create trigger %1$s_touch_reminders
+        after insert or update on public.%1$I
+        for each row execute function public.touch_reminders();
+    $p$, t);
+  end loop;
+end $$;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §10  GRANTS
+-- ═══════════════════════════════════════════════════════════════════════════
+do $$
+declare
+  fn text;
+  fns text[] := array[
+    'in_scope(uuid,uuid[])',
+    'dashboard_summary(text)',
+    'cash_summary(text)',
+    'cash_activity(text,date,date,integer)',
+    'billing_cycle_as_recurrence(billing_cycle,integer)',
+    'reminder_send_at(date,integer)',
+    'generate_reminders(uuid)',
+    'run_due_recurring()',
+    'run_due_subscriptions()'
+  ];
+begin
+  foreach fn in array fns loop
+    execute format('revoke all on function public.%s from public, anon;', fn);
+    execute format('grant execute on function public.%s to authenticated;', fn);
+  end loop;
+end $$;
+
+commit;
+
+
+-- ============================================================================
+-- ============================================================================
+--
+--  PART 9 — WEEKLY DIGEST
+--
+--  Was migration_004_weekly_digest.sql.
+--
+--  Settings has always had a "Weekly digest" switch. It wrote profiles.weekly_digest
+--  and absolutely nothing read it — no query, no job, no email. A user could turn
+--  it on, save, see the success toast, and never receive anything, with no way to
+--  tell the difference between "off" and "broken".
+--
+--  This part is the half that was missing: a function that computes the week for
+--  every user who opted in. The Worker's Monday cron calls it and sends the mail.
+--
+--  Nothing here writes to a ledger table. It only reads.
+--
+-- ============================================================================
+-- ============================================================================
+
+begin;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §1  BOOKKEEPING COLUMN
+--
+--  Tracks the last digest actually sent, so a re-run on the same day is a
+--  no-op rather than a second copy in the inbox. Cron triggers can and do
+--  fire twice.
+-- ═══════════════════════════════════════════════════════════════════════════
+alter table public.profiles
+  add column if not exists weekly_digest_sent_on date;
+
+comment on column public.profiles.weekly_digest_sent_on is
+  'Date of the last weekly digest sent. Guards against duplicate sends when a cron fires more than once.';
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §2  ONE USER'S WEEK
+--
+--  Scoped to the user, across both workspaces — a digest is a personal summary
+--  of everything, not a view of whichever workspace happened to be selected in
+--  the browser last. RLS is not in play here (this is SECURITY DEFINER, called
+--  by the service role), so the user_id filter is doing the isolation and every
+--  query below states it explicitly.
+-- ═══════════════════════════════════════════════════════════════════════════
+create or replace function public.weekly_digest_for(p_user uuid)
+returns json
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_from        date := (current_date - interval '7 days')::date;
+  v_to          date := current_date;
+
+  v_income      numeric := 0;
+  v_expense     numeric := 0;
+  v_count       int     := 0;
+
+  v_prev_income  numeric := 0;
+  v_prev_expense numeric := 0;
+
+  v_balance     numeric := 0;
+  v_top         json;
+  v_upcoming    json;
+  v_overdue_n   int := 0;
+begin
+  -- The week just gone.
+  select
+    coalesce(sum(t.amount) filter (where t.type = 'income'), 0),
+    coalesce(sum(t.amount) filter (where t.type = 'expense'), 0),
+    count(*)
+  into v_income, v_expense, v_count
+  from public.transactions t
+  where t.user_id = p_user
+    and t.status = 'completed'
+    and t.txn_date >= v_from
+    and t.txn_date < v_to;
+
+  -- The week before it, so the email can say "up" or "down" and mean it.
+  select
+    coalesce(sum(t.amount) filter (where t.type = 'income'), 0),
+    coalesce(sum(t.amount) filter (where t.type = 'expense'), 0)
+  into v_prev_income, v_prev_expense
+  from public.transactions t
+  where t.user_id = p_user
+    and t.status = 'completed'
+    and t.txn_date >= (v_from - interval '7 days')::date
+    and t.txn_date < v_from;
+
+  select coalesce(sum(a.current_balance), 0)
+  into v_balance
+  from public.accounts a
+  where a.user_id = p_user
+    and a.is_active;
+
+  -- Where the money went: the five biggest categories of the week.
+  select coalesce(json_agg(x), '[]'::json)
+  into v_top
+  from (
+    select
+      coalesce(c.name, 'Uncategorised') as name,
+      sum(t.amount)                     as amount
+    from public.transactions t
+    left join public.categories c on c.id = t.category_id
+    where t.user_id = p_user
+      and t.status = 'completed'
+      and t.type = 'expense'
+      and t.txn_date >= v_from
+      and t.txn_date < v_to
+    group by 1
+    order by 2 desc
+    limit 5
+  ) x;
+
+  -- What is about to land, so the digest is forward-looking and not just a
+  -- report card.
+  select coalesce(json_agg(x), '[]'::json)
+  into v_upcoming
+  from (
+    select
+      p.name     as name,
+      p.amount   as amount,
+      p.due_date as due_on
+    from public.payments p
+    where p.user_id = p_user
+      and p.status not in ('paid', 'cancelled')
+      and p.due_date >= v_to
+      and p.due_date < (v_to + interval '7 days')::date
+    order by p.due_date
+    limit 5
+  ) x;
+
+  select count(*)
+  into v_overdue_n
+  from public.payments p
+  where p.user_id = p_user
+    and p.status not in ('paid', 'cancelled')
+    and p.due_date < v_to;
+
+  return json_build_object(
+    'from',           v_from,
+    'to',             v_to,
+    'income',         v_income,
+    'expense',        v_expense,
+    'net',            v_income - v_expense,
+    'txn_count',      v_count,
+    'prev_income',    v_prev_income,
+    'prev_expense',   v_prev_expense,
+    'balance',        v_balance,
+    'top_categories', v_top,
+    'upcoming',       v_upcoming,
+    'overdue_count',  v_overdue_n
+  );
+end;
+$$;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §3  THE BATCH THE WORKER ASKS FOR
+--
+--  Only users who switched the digest on, who have somewhere to send it, and
+--  who have not already had one today.
+--
+--  A user with no activity at all still gets nothing: an empty digest is spam
+--  that happens to be accurate.
+-- ═══════════════════════════════════════════════════════════════════════════
+create or replace function public.weekly_digest_batch(p_limit integer default 200)
+returns table (
+  user_id   uuid,
+  email     text,
+  full_name text,
+  currency  text,
+  digest    json
+)
+language sql
+security definer
+set search_path = public
+as $$
+  select
+    p.id,
+    coalesce(nullif(p.notify_email, ''), p.email) as email,
+    coalesce(nullif(p.full_name, ''), 'there')    as full_name,
+    coalesce(p.currency, 'INR')                   as currency,
+    public.weekly_digest_for(p.id)                as digest
+  from public.profiles p
+  where p.weekly_digest
+    and coalesce(nullif(p.notify_email, ''), p.email) <> ''
+    and (p.weekly_digest_sent_on is null or p.weekly_digest_sent_on < current_date)
+    and exists (
+      select 1
+      from public.transactions t
+      where t.user_id = p.id
+        and t.txn_date >= (current_date - interval '7 days')::date
+    )
+  order by p.id
+  limit greatest(p_limit, 1);
+$$;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §4  MARK AS SENT
+-- ═══════════════════════════════════════════════════════════════════════════
+create or replace function public.mark_weekly_digest_sent(p_user uuid)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update public.profiles
+     set weekly_digest_sent_on = current_date
+   where id = p_user;
+$$;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  §5  GRANTS
+--
+--  `weekly_digest_for` is useful to the signed-in user (a preview in the app
+--  could call it for themselves), but it is SECURITY DEFINER and takes a user
+--  id, so it must never be reachable by `anon` — that would let an
+--  unauthenticated caller read anyone's week by guessing a uuid.
+--
+--  The batch and the mark are service-role only: they cross user boundaries
+--  by design and have no business being callable from a browser.
+-- ═══════════════════════════════════════════════════════════════════════════
+revoke all on function public.weekly_digest_for(uuid) from public, anon;
+revoke all on function public.weekly_digest_batch(integer) from public, anon, authenticated;
+revoke all on function public.mark_weekly_digest_sent(uuid) from public, anon, authenticated;
+
+-- Callers may only ask for their own week.
+create or replace function public.my_weekly_digest()
+returns json
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select case
+    when auth.uid() is null then json_build_object('error', 'not authenticated')
+    else public.weekly_digest_for(auth.uid())
+  end;
+$$;
+
+revoke all on function public.my_weekly_digest() from public, anon;
+grant execute on function public.my_weekly_digest() to authenticated;
+
+commit;
+
+
 -- ============================================================================
 --
 --  SETUP COMPLETE
@@ -2527,20 +4657,52 @@ grant execute on function public.send_test_reminder() to authenticated;
 --                       https://finance.novatrixdigital.in/reset
 --                       http://localhost:5173/auth/callback
 --                       http://localhost:5173/reset
---    2. Sign up in the app. The handle_new_user trigger creates your
---       profile, both workspaces, starter accounts and 17 categories.
---    3. Add your first account, then start recording. Every workspace is
---       given a "Cash in Hand" account so physical money is tracked from
---       day one alongside the bank.
---    4. Run supabase/migration_002_cash_and_fixes.sql — it carries the cash
---       reporting functions, the single-primary-account rule and the
---       payment-to-ledger posting.
+--    2. Sign up in the app. The handle_new_user trigger creates your profile,
+--       both workspaces, starter accounts and 17 categories.
+--    3. Add your first account, then start recording. Every workspace is given
+--       a "Cash in Hand" account so physical money is tracked from day one
+--       alongside the bank.
+--    4. Deploy the Worker (npm run deploy). It carries the daily cron that
+--       posts due recurring entries and subscription renewals, sends
+--       reminders, and mails the Monday digest.
 --
---  Verify the install:
---    select table_name from information_schema.tables
---     where table_schema = 'public' order by 1;          -- expect 12 tables
+-- ============================================================================
 --
---    select tablename, rowsecurity from pg_tables
---     where schemaname = 'public';                       -- all must be true
+--  VERIFY THE INSTALL
+--
+--  -- Schema ------------------------------------------------------------
+--  select table_name from information_schema.tables
+--   where table_schema = 'public' order by 1;
+--
+--  select tablename, rowsecurity from pg_tables
+--   where schemaname = 'public';                    -- all must be true
+--
+--  -- Part 7: cash and the single-primary rule ---------------------------
+--  select user_id, count(*) from public.accounts
+--   where is_primary group by user_id having count(*) <> 1;   -- expect 0 rows
+--
+--  select w.id from public.workspaces w
+--   where not exists (select 1 from public.accounts a
+--                      where a.workspace_id = w.id and a.type = 'cash');
+--                                                             -- expect 0 rows
+--
+--  select proname from pg_proc where proname like 'seed_demo%';
+--                                       -- expect 0 rows: the demo seed is gone
+--
+--  -- Part 8: shared rows are allowed -----------------------------------
+--  select is_nullable from information_schema.columns
+--   where table_name = 'accounts' and column_name = 'workspace_id';  -- YES
+--
+--  -- Part 9: the digest ------------------------------------------------
+--  select proname from pg_proc
+--   where proname in ('weekly_digest_for', 'weekly_digest_batch',
+--                     'mark_weekly_digest_sent', 'my_weekly_digest');
+--                                                            -- expect 4 rows
+--
+--  -- Send yourself one now (dryRun renders without sending):
+--  --   curl -X POST https://<your-worker>/api/reminders/run \
+--  --        -H "x-reminder-secret: $REMINDER_SECRET" \
+--  --        -H "content-type: application/json" \
+--  --        -d '{"digest": true, "dryRun": true}'
 --
 -- ============================================================================

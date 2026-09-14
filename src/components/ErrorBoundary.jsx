@@ -17,7 +17,6 @@ export class ErrorBoundary extends Component {
   }
 
   componentDidCatch(error, info) {
-    // eslint-disable-next-line no-console
     console.error('[Novatrix] Unhandled render error:', error, info?.componentStack);
   }
 

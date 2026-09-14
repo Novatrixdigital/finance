@@ -21,7 +21,7 @@ export function MobileNav() {
   return (
     <>
       <nav
-        className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-hair bg-base/92 px-2 pt-2 backdrop-blur-xl lg:hidden"
+        className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-hair bg-base/92 px-2 pt-2 backdrop-blur-xl md:hidden"
         aria-label="Primary"
       >
         <ul className="mx-auto flex max-w-md items-end justify-between">
@@ -80,7 +80,7 @@ export function MobileNav() {
 
       {/* "More" sheet — the rest of the nav plus workspace and theme */}
       {sheet && (
-        <div className="fixed inset-0 z-[85] lg:hidden">
+        <div className="fixed inset-0 z-[85] md:hidden">
           <button
             type="button"
             aria-label="Close menu"

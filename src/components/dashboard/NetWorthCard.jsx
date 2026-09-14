@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Eye, EyeOff, TrendingUp, TrendingDown, ChevronRight, User, Briefcase, Layers } from 'lucide-react';
 import { Card } from '@/components/ui';
@@ -16,7 +15,7 @@ import { cx, icon as resolveIcon } from '@/lib/utils';
  * the kind of small courtesy a finance product is judged on.
  */
 export function NetWorthCard({ stats, trend = [] }) {
-  const { scope, setScope, hidden, setHidden, toggleHidden } = useWorkspace();
+  const { scope, setScope, hidden, toggleHidden } = useWorkspace();
   const navigate = useNavigate();
 
   const growth = stats.netWorthGrowth;

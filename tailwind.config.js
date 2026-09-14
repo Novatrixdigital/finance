@@ -89,6 +89,9 @@ export default {
         30: '7.5rem',
         'sidebar': '17rem',
         'rail': '21rem',
+        // Tablet navigation: icons only, wide enough for a 44px touch target
+        // plus breathing room either side.
+        'railicon': '4.75rem',
       },
       boxShadow: {
         hair: '0 0 0 1px rgba(255,255,255,0.06)',

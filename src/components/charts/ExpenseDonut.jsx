@@ -1,25 +1,14 @@
 import { useState, useMemo } from 'react';
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
+import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
 import { PieChart as PieIcon } from 'lucide-react';
 import { Card, CardHeader, EmptyState, Select } from '@/components/ui';
 import { formatMoney } from '@/lib/format';
 import { CHART_COLORS } from '@/lib/constants';
 import { cx } from '@/lib/utils';
 
-function DonutTooltip({ active, payload }) {
-  if (!active || !payload?.length) return null;
-  const item = payload[0].payload;
-  return (
-    <div className="rounded-2xl border border-hair bg-raised/95 px-4 py-3 shadow-lift backdrop-blur-xl">
-      <p className="flex items-center gap-2 text-[12px] font-semibold text-ink">
-        <span className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color }} />
-        {item.name}
-      </p>
-      <p className="mt-1.5 text-[13px] font-bold tnum text-ink">{formatMoney(item.value)}</p>
-      <p className="text-[11px] text-ink-muted">{item.percentage}% of spending</p>
-    </div>
-  );
-}
+/* The centre of the ring is the readout; there is no floating tooltip. A
+   tooltip and a centre figure showing the same number at the same moment
+   fought each other, and on a phone the tooltip covered the ring it described. */
 
 const PERIODS = [
   { id: 'month', label: 'This Month' },
@@ -92,6 +81,9 @@ export function ExpenseDonut({ data = [], loading, period = 'month', onPeriodCha
                   endAngle={-270}
                   onMouseEnter={(_, index) => setActiveIndex(index)}
                   onMouseLeave={() => setActiveIndex(null)}
+                  // Touch has no hover: without a tap handler the whole ring
+                  // was inert on a phone and the centre never left "Total".
+                  onClick={(_, index) => setActiveIndex((cur) => (cur === index ? null : index))}
                 >
                   {slices.map((entry, index) => (
                     <Cell
@@ -124,6 +116,10 @@ export function ExpenseDonut({ data = [], loading, period = 'month', onPeriodCha
                   type="button"
                   onMouseEnter={() => setActiveIndex(index)}
                   onMouseLeave={() => setActiveIndex(null)}
+                  onFocus={() => setActiveIndex(index)}
+                  onBlur={() => setActiveIndex(null)}
+                  onClick={() => setActiveIndex((cur) => (cur === index ? null : index))}
+                  aria-label={`${slice.name}, ${formatMoney(slice.value)}, ${slice.percentage}% of spending`}
                   className={cx(
                     'flex w-full items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left transition-colors duration-200',
                     activeIndex === index ? 'bg-elevated' : 'hover:bg-elevated/60',

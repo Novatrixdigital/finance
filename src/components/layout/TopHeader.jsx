@@ -225,7 +225,7 @@ export function TopHeader({ onOpenMenu, onOpenSearch }) {
           type="button"
           onClick={onOpenMenu}
           aria-label="Open navigation"
-          className="rounded-xl border border-hair p-2.5 text-ink-dim transition-colors hover:text-ink lg:hidden"
+          className="rounded-xl border border-hair p-2.5 text-ink-dim transition-colors hover:text-ink md:hidden"
         >
           <Menu size={17} />
         </button>

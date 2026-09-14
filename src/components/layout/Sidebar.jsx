@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { MoreVertical, LogOut, User, Settings as SettingsIcon, X, Sparkles } from 'lucide-react';
-import { Logo } from '@/components/brand/Logo';
+import { LogoMark } from '@/components/brand/Logo';
 import { WaveViz } from '@/components/brand/WaveViz';
 import { Avatar } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
@@ -17,8 +17,9 @@ function WorkspaceSwitcher() {
 
   return (
     <div className="px-4 pb-4">
-      <p className="eyebrow mb-2.5 px-1">Switch Workspace</p>
-      <div className="grid grid-cols-3 gap-1.5">
+      <p className="eyebrow nav-wide mb-2.5 px-1">Switch Workspace</p>
+      {/* Stacked on the tablet rail, three across once labels have room. */}
+      <div className="nav-grid grid grid-cols-3 gap-1.5">
         {SCOPE_LIST.map(({ id, label, icon: iconName, hint }) => {
           const Icon = resolveIcon(iconName);
           const active = scope === id;
@@ -27,17 +28,18 @@ function WorkspaceSwitcher() {
               key={id}
               type="button"
               onClick={() => setScope(id)}
-              title={hint}
+              title={`${label} — ${hint}`}
+              aria-label={label}
               aria-pressed={active}
               className={cx(
-                'group flex flex-col items-center gap-1.5 rounded-2xl border px-2 py-3 transition-all duration-400 ease-premium',
+                'group flex flex-col items-center justify-center gap-1.5 rounded-2xl border px-2 py-3 transition-all duration-400 ease-premium',
                 active
                   ? 'border-accent/40 bg-accent/10 text-accent shadow-[0_0_0_1px_rgba(200,255,0,0.15)]'
                   : 'border-hair bg-surface text-ink-muted hover:border-hair-strong hover:text-ink-dim',
               )}
             >
               <Icon size={15} strokeWidth={2} />
-              <span className="text-[10px] font-semibold tracking-[0.02em]">{label}</span>
+              <span className="nav-label text-[10px] font-semibold tracking-[0.02em]">{label}</span>
             </button>
           );
         })}
@@ -107,9 +109,19 @@ function UserCard() {
 
   return (
     <div ref={ref} className="relative border-t border-hair px-4 py-4">
-      <div className="flex items-center gap-3">
-        <Avatar name={displayName} src={profile?.avatar_url} size={38} />
-        <div className="min-w-0 flex-1">
+      <div className="nav-row flex items-center gap-3">
+        {/* On the rail the avatar is the only thing left, so it carries the
+            menu itself — otherwise the account would be unreachable there. */}
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-label="Account menu"
+          aria-expanded={open}
+          className="shrink-0 rounded-full"
+        >
+          <Avatar name={displayName} src={profile?.avatar_url} size={38} />
+        </button>
+        <div className="nav-label min-w-0 flex-1">
           <p className="truncate text-[13px] font-semibold text-ink">{displayName}</p>
           <p className="truncate text-[11px] text-ink-muted">{profile?.email || user?.email}</p>
         </div>
@@ -118,14 +130,14 @@ function UserCard() {
           onClick={() => setOpen((v) => !v)}
           aria-label="Account menu"
           aria-expanded={open}
-          className="rounded-lg p-1.5 text-ink-muted transition-colors hover:bg-hair hover:text-ink"
+          className="nav-wide rounded-lg p-1.5 text-ink-muted transition-colors hover:bg-hair hover:text-ink"
         >
           <MoreVertical size={16} />
         </button>
       </div>
 
       {open && (
-        <div className="absolute bottom-[calc(100%-0.5rem)] left-4 right-4 z-50 animate-scale-in overflow-hidden rounded-2xl border border-hair bg-raised shadow-lift">
+        <div className="nav-pop absolute bottom-[calc(100%-0.5rem)] left-4 right-4 z-50 animate-scale-in overflow-hidden rounded-2xl border border-hair bg-raised shadow-lift">
           <button
             type="button"
             onClick={() => go('/settings')}
@@ -162,13 +174,27 @@ export function Sidebar({ mobileOpen, onCloseMobile }) {
 
   const content = (
     <>
-      {/* Brand */}
-      <div className="flex items-center justify-between px-5 py-5">
-        <Logo size={38} />
+      {/*
+        Brand. The wordmark is hidden with CSS rather than by passing Logo's
+        `compact` prop, because the same markup has to be a rail at one width
+        and a full sidebar at the next — a boolean prop cannot be responsive.
+      */}
+      <div className="nav-row flex items-center justify-between gap-3 px-5 py-5">
+        <div className="flex min-w-0 items-center gap-3">
+          <LogoMark size={38} />
+          <div className="nav-label min-w-0 leading-none">
+            <p className="truncate text-[15px] font-bold tracking-[-0.02em] text-ink">
+              Novatrix Digital
+            </p>
+            <p className="mt-1 truncate text-[11px] tracking-[0.02em] text-ink-muted">
+              Finance. Simplified.
+            </p>
+          </div>
+        </div>
         <button
           type="button"
           onClick={onCloseMobile}
-          className="rounded-xl border border-hair p-2 text-ink-dim lg:hidden"
+          className="rounded-xl border border-hair p-2 text-ink-dim md:hidden"
           aria-label="Close navigation"
         >
           <X size={16} />
@@ -196,9 +222,12 @@ export function Sidebar({ mobileOpen, onCloseMobile }) {
                   <NavLink
                     to={to}
                     onClick={onCloseMobile}
+                    // The rail has no room for text, so the label becomes the
+                    // tooltip and the accessible name.
+                    title={label}
                     className={({ isActive }) =>
                       cx(
-                        'group relative flex items-center gap-3 rounded-2xl px-3.5 py-2 text-[13.5px] font-medium transition-all duration-300 ease-premium',
+                        'nav-row group relative flex items-center gap-3 rounded-2xl px-3.5 py-2.5 text-[13.5px] font-medium transition-all duration-300 ease-premium sm:py-2',
                         isActive
                           ? 'bg-elevated text-ink'
                           : 'text-ink-muted hover:bg-hair hover:text-ink-dim',
@@ -218,7 +247,7 @@ export function Sidebar({ mobileOpen, onCloseMobile }) {
                             isActive ? 'text-accent' : 'text-current',
                           )}
                         />
-                        <span className="truncate">{label}</span>
+                        <span className="nav-label truncate">{label}</span>
                       </>
                     )}
                   </NavLink>
@@ -229,8 +258,9 @@ export function Sidebar({ mobileOpen, onCloseMobile }) {
         </nav>
 
         {/* Decorative, so it yields first: only shown when the viewport is
-            tall enough to fit it without squeezing the navigation. */}
-        <div className="mt-auto hidden [@media(min-height:900px)]:block">
+            tall enough to fit it without squeezing the navigation, and never
+            on the rail, where it would be an unreadable sliver. */}
+        <div className="nav-wide mt-auto hidden [@media(min-height:900px)]:block">
           <PromoPanel />
         </div>
       </div>
@@ -243,14 +273,21 @@ export function Sidebar({ mobileOpen, onCloseMobile }) {
 
   return (
     <>
-      {/* Desktop rail */}
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-sidebar flex-col border-r border-hair bg-base lg:flex">
+      {/*
+        Persistent navigation from 768px up.
+
+        It used to appear only at 1024px, which handed every tablet — an iPad
+        in portrait is 768 to 834 — the phone layout: a hamburger drawer and a
+        bottom bar, on a screen with room to spare. From `md` this is an icon
+        rail; from `lg` the labels come back.
+      */}
+      <aside className="nav-rail fixed inset-y-0 left-0 z-40 hidden w-railicon flex-col border-r border-hair bg-base md:flex lg:w-sidebar">
         {content}
       </aside>
 
-      {/* Mobile drawer */}
+      {/* Phone drawer */}
       {mobileOpen && (
-        <div className="fixed inset-0 z-[80] lg:hidden">
+        <div className="fixed inset-0 z-[80] md:hidden">
           <button
             type="button"
             aria-label="Close navigation"

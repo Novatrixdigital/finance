@@ -155,14 +155,24 @@ export default function Cash() {
   const { workspaceType, isCombined } = useWorkspace();
   const toast = useToast();
 
+  const PAGE = 200;
   const [range, setRange] = useState('month');
   const [flow, setFlow] = useState('all');
+  /* The activity RPC is bounded; this is how the user asks for more of it
+     rather than being handed a silently clipped list. */
+  const [visible, setVisible] = useState(PAGE);
 
   const from = useMemo(() => rangeStart(range), [range]);
   const { stats, rows, cashAccounts, bankAccounts, loading, refreshAll } = useCash({
     from,
-    limit: 400,
+    limit: visible,
   });
+
+  /* A new range starts a fresh list — otherwise a wide range keeps whatever
+     window the previous one had grown to. */
+  useEffect(() => setVisible(PAGE), [range]);
+
+  const clipped = rows.length >= visible;
 
   useEffect(() => {
     if (dirtyToken > 0) refreshAll();
@@ -393,7 +403,9 @@ export default function Cash() {
           title="Cash history"
           subtitle={
             filtered.length
-              ? `${formatMoney(periodTotals.out)} out · ${formatMoney(periodTotals.in)} in`
+              ? `${formatMoney(periodTotals.out)} out · ${formatMoney(periodTotals.in)} in${
+                  clipped ? ' · showing the most recent entries' : ''
+                }`
               : 'Every note that moved, oldest entries included.'
           }
           action={
@@ -436,6 +448,14 @@ export default function Cash() {
                 workspaceType={workspaceType}
               />
             ))}
+
+            {clipped && (
+              <div className="flex justify-center pt-5">
+                <Button variant="secondary" size="sm" onClick={() => setVisible((v) => v + PAGE)}>
+                  Show more
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </Card>

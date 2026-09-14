@@ -1,0 +1,54 @@
+name: CI
+
+# Nothing used to run on push: the lint gate was red for five warnings and no
+# one found out, because nothing was checking. This is that check.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm run test
+
+      - name: SQL structure
+        run: npm run check:sql
+
+      - name: Worker routing
+        run: npm run check:worker
+
+      - name: Build
+        # The build needs Supabase vars to exist, but not to be real: this step
+        # proves the bundle compiles, it never talks to a database. Point the
+        # repository secrets at the real project to have the generated CSP in
+        # dist/_headers match production.
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://ci-placeholder.supabase.co' }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'ci-placeholder-anon-key' }}
+        run: npm run build
+
+      - name: Security headers present in the build
+        # gen-headers.mjs runs as postbuild. If it silently stopped emitting a
+        # CSP, every deployed page would lose it — worth one grep.
+        run: |
+          test -f dist/_headers || { echo "dist/_headers missing"; exit 1; }
+          grep -q "Content-Security-Policy" dist/_headers || { echo "CSP missing"; exit 1; }
+          grep -q "Strict-Transport-Security" dist/_headers || { echo "HSTS missing"; exit 1; }
+          echo "✓ security headers present"

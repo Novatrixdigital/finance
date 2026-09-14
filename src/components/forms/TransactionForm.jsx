@@ -1,14 +1,14 @@
 import { useState, useEffect, useMemo } from 'react';
-import { ArrowDownLeft, ArrowUpRight, ArrowLeftRight } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, ArrowLeftRight, Paperclip, X, Loader2 } from 'lucide-react';
 import { Modal, Button, Input, Select, Textarea } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { useWorkspace } from '@/context/WorkspaceContext';
 import { useToast } from '@/context/ToastContext';
 import { useModals } from '@/context/ModalContext';
 import { useFormOptions } from '@/hooks/useFormOptions';
-import { supabase, readableError } from '@/lib/supabase';
+import { supabase, readableError, uploadFile, signedUrl } from '@/lib/supabase';
 import { PAYMENT_METHODS, TRANSACTION_STATUSES } from '@/lib/constants';
-import { toISODate, formatMoney, currencySymbol } from '@/lib/format';
+import { toISODate, formatMoney, currencySymbol, defaultCurrency } from '@/lib/format';
 import { cx } from '@/lib/utils';
 
 const TYPES = [
@@ -31,7 +31,11 @@ const blank = (type = 'expense', workspaceId = '') => ({
   status: 'completed',
   reference: '',
   notes: '',
+  attachment_url: '',
 });
+
+/** Matches the `attachments` bucket policy in the schema. */
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
 /**
  * Create / edit a ledger entry.
@@ -58,6 +62,7 @@ export function TransactionForm({
 
   const [form, setForm] = useState(() => blank(defaultType, writeWorkspace?.id));
   const [saving, setSaving] = useState(false);
+  const [attaching, setAttaching] = useState(false);
   const [errors, setErrors] = useState({});
 
   const isEdit = Boolean(record?.id);
@@ -79,6 +84,7 @@ export function TransactionForm({
         payment_method: record.payment_method || 'Bank Transfer',
         reference: record.reference || '',
         notes: record.notes || '',
+        attachment_url: record.attachment_url || '',
       });
     } else {
       setForm({ ...blank(defaultType, writeWorkspace?.id), ...(preset || {}) });
@@ -137,7 +143,7 @@ export function TransactionForm({
     setErrors((prev) => (prev.account_id ? { ...prev, account_id: undefined } : prev));
   };
   const workspaceCurrency = useMemo(
-    () => accounts.find((a) => a.id === form.account_id)?.currency || 'INR',
+    () => accounts.find((a) => a.id === form.account_id)?.currency || defaultCurrency(),
     [accounts, form.account_id],
   );
 
@@ -157,6 +163,50 @@ export function TransactionForm({
 
     setErrors(next);
     return Object.keys(next).length === 0;
+  };
+
+  /*
+    Receipts.
+
+    The schema has carried `transactions.attachment_url` and a private
+    `attachments` bucket — with uid-scoped RLS policies — since the first
+    migration, and nothing in the app ever wrote to either. This is the control
+    that was missing, not new infrastructure.
+  */
+  const onAttach = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      toast.error('That file is over 10 MB — the bucket will reject it.');
+      e.target.value = '';
+      return;
+    }
+
+    setAttaching(true);
+    try {
+      // The storage PATH is what gets saved, not the signed URL that comes
+      // back with it: signed URLs expire, and a column full of expired links
+      // is worse than an empty one. `signedUrl` mints a fresh link on demand.
+      const { path } = await uploadFile('attachments', user.id, file, 'receipt-');
+      setForm((f) => ({ ...f, attachment_url: path }));
+      toast.success('Receipt attached.');
+    } catch (err) {
+      toast.error(readableError(err));
+    } finally {
+      setAttaching(false);
+      e.target.value = '';
+    }
+  };
+
+  /** Opens the receipt through a link minted at click time. */
+  const openReceipt = async () => {
+    try {
+      const url = await signedUrl('attachments', form.attachment_url);
+      if (url) window.open(url, '_blank', 'noopener');
+    } catch (err) {
+      toast.error(readableError(err));
+    }
   };
 
   const submit = async (e) => {
@@ -180,6 +230,7 @@ export function TransactionForm({
       payment_method: form.payment_method || null,
       reference: form.reference?.trim() || null,
       notes: form.notes?.trim() || null,
+      attachment_url: form.attachment_url || null,
     };
 
     const { error } = isEdit
@@ -430,6 +481,46 @@ export function TransactionForm({
         />
 
         <Textarea label="Notes" name="notes" value={form.notes} onChange={set('notes')} placeholder="Optional" />
+
+        {/* Receipt */}
+        <div>
+          <span className="field-label">Receipt</span>
+          {form.attachment_url ? (
+            <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-hair bg-surface px-4 py-3">
+              <Paperclip size={15} className="shrink-0 text-accent" />
+              <button
+                type="button"
+                onClick={openReceipt}
+                className="min-w-0 flex-1 truncate text-left text-[13px] text-ink underline-offset-2 hover:underline"
+              >
+                View attached receipt
+              </button>
+              <button
+                type="button"
+                onClick={() => setForm((f) => ({ ...f, attachment_url: '' }))}
+                className="shrink-0 rounded-lg p-1.5 text-ink-muted transition-colors hover:bg-negative/10 hover:text-negative"
+                aria-label="Remove receipt"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ) : (
+            <label className="btn-secondary btn-md w-full cursor-pointer sm:w-auto">
+              {attaching ? <Loader2 size={15} className="animate-spin" /> : <Paperclip size={15} />}
+              {attaching ? 'Uploading…' : 'Attach receipt'}
+              <input
+                type="file"
+                accept="image/*,application/pdf"
+                onChange={onAttach}
+                className="hidden"
+                disabled={attaching}
+              />
+            </label>
+          )}
+          <p className="mt-1.5 text-[12px] text-ink-muted">
+            Image or PDF, up to 10 MB. Stored privately — only you can open it.
+          </p>
+        </div>
       </form>
     </Modal>
   );

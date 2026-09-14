@@ -5,6 +5,7 @@ import { SCOPES } from '@/lib/constants';
 
 const WorkspaceContext = createContext(null);
 const STORAGE_KEY = 'novatrix.scope';
+const HIDDEN_KEY = 'novatrix.hideAmounts';
 
 /**
  * The Personal / Business / Combined switch.
@@ -23,8 +24,29 @@ export function WorkspaceProvider({ children }) {
     return Object.values(SCOPES).includes(saved) ? saved : SCOPES.COMBINED;
   });
 
-  const [hidden, setHidden] = useState(true);
-  const toggleHidden = useCallback(() => setHidden((v) => !v), []);
+  /* Amounts start hidden — the safe default when a screen might be shared or
+     overlooked — but the choice to reveal them sticks, so someone working on
+     their own laptop is not re-unhiding the figures on every page load. */
+  const [hidden, setHidden] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    try {
+      return window.localStorage.getItem(HIDDEN_KEY) !== 'false';
+    } catch {
+      return true;
+    }
+  });
+
+  const toggleHidden = useCallback(() => {
+    setHidden((v) => {
+      const next = !v;
+      try {
+        window.localStorage.setItem(HIDDEN_KEY, String(next));
+      } catch {
+        /* private mode — it just reverts to hidden next load */
+      }
+      return next;
+    });
+  }, []);
 
   const setScope = useCallback((next) => {
     if (!Object.values(SCOPES).includes(next)) return;

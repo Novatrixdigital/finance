@@ -47,8 +47,20 @@ binding = "ASSETS"
 #   "Line 2: Infinite loop detected in this rule" [code: 100324]
 not_found_handling = "none"
 
-# ── Cron: send due reminders every morning ────────────────────────────────────
-# 01:00 UTC = 06:30 IST. Calls scheduled() in worker/index.js.
+# ── Cron: the daily pass ──────────────────────────────────────────────────────
+# 01:00 UTC = 06:30 IST. Calls scheduled() in worker/index.js, which runs:
+#
+#   1. run_due_recurring()      rent, payroll — posted to the ledger
+#   2. run_due_subscriptions()  renewals — posted to the ledger
+#   3. reminders                generated, then emailed through Resend
+#   4. the weekly digest        on Mondays only, for users who opted in
+#
+# Steps 1 and 2 used to happen only in the browser, on the first page load of
+# the day. "Auto-posted" therefore meant "posted whenever somebody next signs
+# in": leave the app shut for a fortnight and the rent was never booked, so
+# every balance, budget and report was wrong until someone opened it. The
+# browser still runs them on load — that is a harmless catch-up, since both
+# functions are idempotent — but the schedule no longer depends on it.
 [triggers]
 crons = ["0 1 * * *"]
 

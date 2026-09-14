@@ -139,7 +139,7 @@ export default function Categories() {
                       <Lock size={12} />
                     </span>
                   ) : (
-                    <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                    <div className="flex shrink-0 items-center gap-0.5 reveal-actions">
                       <button
                         type="button"
                         onClick={() => open('category', { record: category })}

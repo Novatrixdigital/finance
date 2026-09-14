@@ -330,6 +330,101 @@
     }
   }
 
+  /*
+    ROW / CARD ACTIONS — edit and delete.
+
+    These were written as `opacity-0 group-hover:opacity-100`, which is a fine
+    desktop flourish and a dead end anywhere without a mouse: on a phone or a
+    tablet there is no hover, so the buttons never appeared and the records
+    could not be edited or deleted at all. The stacked-table rule below `sm`
+    forced them visible, which hid the problem on phones but left every tablet
+    between 640px and the desktop breakpoint with unreachable controls.
+
+    So: visible by default, and only *hidden until hover* where a real pointer
+    exists to do the hovering.
+  */
+  .reveal-actions {
+    @apply opacity-100 transition-opacity duration-200;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .reveal-actions {
+      @apply opacity-0;
+    }
+
+    .group:hover .reveal-actions,
+    .reveal-actions:focus-within {
+      @apply opacity-100;
+    }
+  }
+
+  /* Off-screen until focused, then a real, visible target. */
+  .skip-link {
+    @apply absolute left-4 top-4 z-[100] -translate-y-24 rounded-full bg-lime px-5 py-2.5
+           text-[13px] font-semibold text-black transition-transform duration-200
+           focus:translate-y-0;
+  }
+
+  /*
+    TABLET ICON RAIL — 768px to 1023px.
+
+    Persistent navigation used to start at 1024px, so every tablet got the
+    phone layout: a hamburger drawer over a bottom bar, on a screen with room
+    to spare. Between those widths the sidebar is now an icon rail.
+
+    These rules are scoped to `.nav-rail` rather than written as breakpoint
+    utilities because the phone drawer renders the *same* markup — a bare
+    `hidden lg:inline` on a label would have blanked the drawer's labels too,
+    since a 400px phone is also below `lg`.
+  */
+  @media (min-width: 768px) and (max-width: 1023.98px) {
+    .nav-rail .nav-label,
+    .nav-rail .nav-wide {
+      display: none;
+    }
+
+    .nav-rail .nav-row {
+      @apply justify-center px-0;
+    }
+
+    .nav-rail .nav-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    /* Popovers cannot stretch to a 4.75rem rail; they open at a fixed width. */
+    .nav-rail .nav-pop {
+      @apply left-2 right-auto w-56;
+    }
+  }
+
+  /*
+    A COLUMN THAT YIELDS ON A TABLET.
+
+    The wide ledgers ask for 52–56rem before they stop compressing, and a
+    tablet in portrait has roughly 660px of content once the rail is subtracted
+    — so every one of them side-scrolled, with the amount and the row actions
+    parked off-screen to the right.
+
+    Marking the least load-bearing column `.col-wide` drops it through the
+    tablet band. Below `sm` nothing is lost either: the stacked-card layout
+    shows every field with its own label, so the column comes back there.
+  */
+  .col-wide {
+    display: none;
+  }
+
+  @media (min-width: 1024px) {
+    .col-wide {
+      display: table-cell;
+    }
+  }
+
+  @media (max-width: 639px) {
+    .table-stack .col-wide {
+      @apply flex;
+    }
+  }
+
   .hair-x {
     @apply h-px w-full bg-hair;
   }
@@ -402,5 +497,67 @@
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   PRINT — the period statement, on paper
+
+   "A statement you can hand to an accountant" was true of the CSV and of
+   nothing else: printing the page produced the dark chrome, the sidebar and a
+   page of wasted toner. Print drops the frame and renders the content as ink
+   on white, whichever theme is on screen.
+   ══════════════════════════════════════════════════════════════════════════ */
+@media print {
+  /* Screen furniture: navigation, header, floating bars, action buttons. */
+  aside,
+  header,
+  nav,
+  .skip-link,
+  .no-print,
+  [role='dialog'],
+  button,
+  select,
+  input {
+    display: none !important;
+  }
+
+  html,
+  body,
+  #root {
+    height: auto;
+    background: #fff !important;
+  }
+
+  /* The padding that clears the sidebar and the phone bar is meaningless on
+     paper and would indent every page. */
+  main {
+    padding: 0 !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+    background: transparent !important;
+    color: #000 !important;
+    border-color: #bbb !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
+  /* Cards become ruled blocks that do not split across a page break. */
+  .bento,
+  table,
+  tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  a[href]::after {
+    content: '';
+  }
+
+  @page {
+    margin: 16mm;
   }
 }

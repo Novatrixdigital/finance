@@ -9,6 +9,7 @@ import {
   Trash2,
   Receipt,
   Filter,
+  Paperclip,
 } from 'lucide-react';
 import { PageHeader, StatStrip } from '@/components/layout/PageHeader';
 import {
@@ -48,12 +49,35 @@ export default function Transactions() {
   const [confirm, setConfirm] = useState(null);
   const [deleting, setDeleting] = useState(false);
 
-  const { rows, loading, remove, refresh } = useCollection('transactions', {
-    select:
-      'id, description, amount, type, status, txn_date, workspace_id, payment_method, reference, notes, account_id, to_account_id, category_id, contact_id, category:categories(name, color), account:accounts!transactions_account_id_fkey(name), to_account:accounts!transactions_to_account_id_fkey(name), contact:contacts(name)',
-    orderBy: { column: 'txn_date', ascending: false },
-    limit: 400,
-  });
+  /*
+    The structured filters run server-side so paging stays correct. Doing them
+    in the browser only worked while the page held every row — with a cap in
+    place, "All time" meant "the newest 400", and the totals under the filters
+    were computed from that slice without saying so.
+  */
+  const filters = useMemo(() => {
+    const f = {};
+    if (range !== 'all') {
+      f.txn_date = {
+        op: 'gte',
+        value: toISODate(new Date(Date.now() - Number(range) * 86400000)),
+      };
+    }
+    if (type !== 'all') f.type = type;
+    if (categoryId !== 'all') f.category_id = categoryId;
+    return f;
+  }, [range, type, categoryId]);
+
+  const { rows, loading, loadingMore, hasMore, loadMore, loadAll, remove, refresh } = useCollection(
+    'transactions',
+    {
+      select:
+        'id, description, amount, type, status, txn_date, workspace_id, payment_method, reference, notes, attachment_url, account_id, to_account_id, category_id, contact_id, category:categories(name, color), account:accounts!transactions_account_id_fkey(name), to_account:accounts!transactions_to_account_id_fkey(name), contact:contacts(name)',
+      orderBy: { column: 'txn_date', ascending: false },
+      filters,
+      pageSize: 200,
+    },
+  );
 
   const { categories } = useFormOptions();
 
@@ -62,41 +86,62 @@ export default function Transactions() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dirtyToken]);
 
-  /* Filtering happens client-side: the page already holds a bounded window of
-     rows, and this keeps the controls instant. */
+  /* Free text is the one filter left in the browser: it spans joined category,
+     account and contact names, which PostgREST cannot match in one pass. It
+     therefore searches what is loaded — the UI says so when more remains. */
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
-    const cutoff =
-      range === 'all'
-        ? null
-        : toISODate(new Date(Date.now() - Number(range) * 86400000));
+    if (!term) return rows;
 
     return rows.filter((t) => {
-      if (type !== 'all' && t.type !== type) return false;
-      if (categoryId !== 'all' && t.category_id !== categoryId) return false;
-      if (cutoff && t.txn_date < cutoff) return false;
-      if (term) {
-        const haystack = [t.description, t.category?.name, t.account?.name, t.contact?.name, t.reference]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase();
-        if (!haystack.includes(term)) return false;
-      }
-      return true;
+      const haystack = [t.description, t.category?.name, t.account?.name, t.contact?.name, t.reference]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(term);
     });
-  }, [rows, search, type, categoryId, range]);
+  }, [rows, search]);
+
+  /*
+    Headline totals come from their own pass over the whole filtered set, three
+    columns wide. Summing the visible page instead would have quietly reported
+    one page of income as the period's income — the number a user trusts most
+    on this screen is the one that must not be a sample.
+  */
+  const { rows: totalRows, truncated: totalsTruncated } = useCollection('transactions', {
+    select: 'id, amount, type',
+    orderBy: { column: 'txn_date', ascending: false },
+    filters,
+    all: true,
+    // Three narrow columns, so a big page is cheap and keeps the number of
+    // round trips down on a long "All time" range.
+    pageSize: 1000,
+  });
+
+  const searching = Boolean(search.trim());
 
   const totals = useMemo(() => {
-    const income = sumBy(filtered.filter((t) => t.type === 'income'), (t) => t.amount);
-    const expense = sumBy(filtered.filter((t) => t.type === 'expense'), (t) => t.amount);
-    return { income, expense, net: income - expense, count: filtered.length };
-  }, [filtered]);
+    // Free text only matches loaded rows, so while a search is active the
+    // strip describes the matches rather than the period.
+    const source = searching ? filtered : totalRows;
+    const income = sumBy(source.filter((t) => t.type === 'income'), (t) => t.amount);
+    const expense = sumBy(source.filter((t) => t.type === 'expense'), (t) => t.amount);
+    return { income, expense, net: income - expense, count: source.length };
+  }, [filtered, totalRows, searching]);
 
-  const exportCsv = () => {
-    if (!filtered.length) return toast.info('Nothing to export with these filters.');
+  const [exporting, setExporting] = useState(false);
+
+  /* Pulls the rest of the filtered set before writing the file — an export
+     that stops at the visible page is a partial ledger with no warning. */
+  const exportCsv = async () => {
+    setExporting(true);
+    const out = searching ? filtered : await loadAll();
+    setExporting(false);
+
+    if (!out.length) return toast.info('Nothing to export with these filters.');
     downloadCSV(
       `novatrix-transactions-${toISODate()}`,
-      filtered.map((t) => ({
+      out.map((t) => ({
         Date: t.txn_date,
         Description: t.description,
         Type: t.type,
@@ -109,7 +154,7 @@ export default function Transactions() {
         Reference: t.reference || '',
       })),
     );
-    toast.success(`Exported ${filtered.length} transactions.`);
+    toast.success(`Exported ${out.length} transactions.`);
   };
 
   const confirmDelete = async () => {
@@ -129,7 +174,13 @@ export default function Transactions() {
         subtitle="Your full ledger — filter it, export it, correct it."
         actions={
           <>
-            <Button variant="secondary" size="md" icon={Download} onClick={exportCsv}>
+            <Button
+              variant="secondary"
+              size="md"
+              icon={Download}
+              onClick={exportCsv}
+              loading={exporting}
+            >
               Export
             </Button>
             <Button size="md" icon={Plus} onClick={() => open('transaction')}>
@@ -140,7 +191,7 @@ export default function Transactions() {
       >
         <StatStrip
           items={[
-            { label: 'Transactions', value: totals.count },
+            { label: searching ? 'Matches' : 'Transactions', value: totals.count },
             { label: 'Income', value: formatMoney(totals.income), tone: 'lime' },
             { label: 'Expenses', value: formatMoney(totals.expense), tone: 'negative' },
             {
@@ -150,6 +201,11 @@ export default function Transactions() {
             },
           ]}
         />
+        {totalsTruncated && !searching && (
+          <p className="mt-3 text-[11.5px] text-warning">
+            This range holds more rows than can be totalled at once — narrow it for exact figures.
+          </p>
+        )}
       </PageHeader>
 
       {/* Filters */}
@@ -177,6 +233,12 @@ export default function Transactions() {
             <option value="all">All time</option>
           </Select>
         </div>
+
+        {searching && hasMore && (
+          <p className="mt-3 text-[11.5px] text-ink-muted">
+            Searching the {rows.length} rows loaded so far. Load more below to widen the search.
+          </p>
+        )}
       </Card>
 
       {/* Ledger */}
@@ -219,12 +281,12 @@ export default function Transactions() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="table-stack w-full sm:min-w-[54rem]">
+            <table className="table-stack w-full sm:min-w-[42rem]">
               <thead className="bg-surface/50">
                 <tr>
                   <th className="t-head">Description</th>
                   <th className="t-head">Category</th>
-                  <th className="t-head">Account</th>
+                  <th className="t-head col-wide">Account</th>
                   <th className="t-head">Date</th>
                   <th className="t-head text-right">Amount</th>
                   <th className="t-head text-right">Actions</th>
@@ -246,6 +308,13 @@ export default function Transactions() {
                           <div className="min-w-0">
                             <div className="flex items-center gap-2">
                               <p className="truncate font-medium">{t.description || 'Transaction'}</p>
+                              {t.attachment_url && (
+                                <Paperclip
+                                  size={12}
+                                  className="shrink-0 text-ink-muted"
+                                  aria-label="Has a receipt"
+                                />
+                              )}
                               {isCombined && <WorkspaceBadge type={workspaceType(t.workspace_id)} />}
                             </div>
                             {t.contact?.name && (
@@ -271,7 +340,7 @@ export default function Transactions() {
                         )}
                       </td>
 
-                      <td className="t-cell text-[13px] text-ink-dim" data-label="Account">
+                      <td className="t-cell col-wide text-[13px] text-ink-dim" data-label="Account">
                         {t.account?.name || '—'}
                       </td>
 
@@ -296,7 +365,7 @@ export default function Transactions() {
                       </td>
 
                       <td className="t-cell text-right" data-actions>
-                        <div className="flex items-center justify-end gap-1 opacity-0 transition-opacity duration-200 group-hover:opacity-100 focus-within:opacity-100">
+                        <div className="flex items-center justify-end gap-1 reveal-actions">
                           <button
                             type="button"
                             onClick={() => open('transaction', { record: t })}
@@ -320,6 +389,17 @@ export default function Transactions() {
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {!loading && hasMore && (
+          <div className="flex flex-col items-center gap-2 border-t border-hair px-4 py-5 sm:px-6">
+            <Button variant="secondary" size="sm" onClick={loadMore} loading={loadingMore}>
+              Load more
+            </Button>
+            <p className="text-[11.5px] text-ink-muted">
+              Showing {rows.length} of {totalsTruncated ? 'many' : totalRows.length}
+            </p>
           </div>
         )}
       </Card>

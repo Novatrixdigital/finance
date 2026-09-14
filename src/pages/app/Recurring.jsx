@@ -202,7 +202,7 @@ export default function Recurring() {
                       <ArrowUpRight size={11} />
                     </button>
                   ) : (
-                    <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                    <div className="flex shrink-0 items-center gap-1 reveal-actions">
                       <button
                         type="button"
                         onClick={() => open('recurring', { record: rule })}

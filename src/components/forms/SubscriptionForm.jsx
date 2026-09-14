@@ -12,7 +12,7 @@ import {
   PAYMENT_METHODS,
   CURRENCIES,
 } from '@/lib/constants';
-import { toISODate, formatMoney } from '@/lib/format';
+import { toISODate, formatMoney, defaultCurrency } from '@/lib/format';
 import { Sparkles } from 'lucide-react';
 import { icon as resolveIcon, cx } from '@/lib/utils';
 
@@ -21,7 +21,7 @@ const blank = (workspaceId = '') => ({
   vendor: '',
   plan: '',
   amount: '',
-  currency: 'INR',
+  currency: defaultCurrency(),
   billing_cycle: 'monthly',
   cycle_count: 1,
   status: 'active',

@@ -256,10 +256,268 @@ async function runReminders(env, options = {}) {
   };
 }
 
+/* ── Weekly digest ────────────────────────────────────────────────────────── */
+
+/**
+ * The weekly digest email.
+ *
+ * Settings has offered a "Weekly digest" switch since the beginning; it wrote
+ * `profiles.weekly_digest` and nothing anywhere read the column. Turning it on
+ * produced a success toast and then silence, which is indistinguishable from
+ * the feature being off. This is the other half.
+ *
+ * Same table-and-inline-styles discipline as the reminder mail: Gmail and
+ * Outlook drop <style> blocks and ignore flex and grid.
+ */
+function renderDigest(row, appUrl) {
+  const d = row.digest || {};
+  const cur = row.currency || 'INR';
+  const m = (v) => money(Number(v) || 0, cur);
+
+  const spentLastWeek = Number(d.prev_expense) || 0;
+  const spent = Number(d.expense) || 0;
+  const delta = spentLastWeek > 0 ? Math.round(((spent - spentLastWeek) / spentLastWeek) * 100) : null;
+  const direction =
+    delta === null ? '' : delta > 0 ? `${delta}% more than the week before` : `${Math.abs(delta)}% less than the week before`;
+
+  const figure = (label, value, colour) => `
+      <td style="padding:0 6px;" width="33%">
+        <div style="background:#111416;border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:14px 12px;text-align:center;">
+          <div style="color:#6B7280;font-size:10.5px;letter-spacing:0.08em;text-transform:uppercase;">${label}</div>
+          <div style="margin-top:6px;color:${colour};font-size:17px;font-weight:800;">${escapeHtml(value)}</div>
+        </div>
+      </td>`;
+
+  const listRows = (items, right) =>
+    (items || [])
+      .map(
+        (i) => `
+        <tr>
+          <td style="padding:7px 0;color:#9CA3AF;font-size:13px;">${escapeHtml(i.name || '')}</td>
+          <td style="padding:7px 0;color:#F5F5F5;font-size:13px;font-weight:600;text-align:right;">${escapeHtml(right(i))}</td>
+        </tr>`,
+      )
+      .join('');
+
+  const categories = listRows(d.top_categories, (i) => m(i.amount));
+  const upcoming = listRows(d.upcoming, (i) => `${m(i.amount)} · ${prettyDate(i.due_on)}`);
+
+  const section = (title, body) =>
+    body
+      ? `
+        <tr><td style="padding:24px 28px 0 28px;">
+          <div style="color:#6B7280;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;">${title}</div>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:8px;">${body}</table>
+        </td></tr>`
+      : '';
+
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"></head>
+<body style="margin:0;padding:0;background:#090B0D;">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;">Your week: ${escapeHtml(m(d.income))} in, ${escapeHtml(m(d.expense))} out.</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#090B0D;padding:32px 16px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+             style="max-width:560px;background:#15191C;border:1px solid rgba(255,255,255,0.08);border-radius:20px;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+
+        <tr><td style="padding:26px 28px 0 28px;">
+          <table role="presentation" cellpadding="0" cellspacing="0"><tr>
+            <td style="width:34px;vertical-align:middle;">
+              <div style="width:34px;height:34px;border-radius:10px;background:#1A1F22;text-align:center;line-height:34px;color:#C8FF00;font-size:19px;font-weight:800;">N</div>
+            </td>
+            <td style="padding-left:11px;vertical-align:middle;">
+              <div style="color:#F5F5F5;font-size:14px;font-weight:700;">Novatrix Digital</div>
+              <div style="color:#6B7280;font-size:11px;">Finance. Simplified.</div>
+            </td>
+          </tr></table>
+        </td></tr>
+
+        <tr><td style="padding:26px 28px 0 28px;">
+          <div style="color:#6B7280;font-size:11px;letter-spacing:1.4px;text-transform:uppercase;">Your week</div>
+          <h1 style="margin:12px 0 0 0;color:#F5F5F5;font-size:23px;line-height:1.28;font-weight:800;letter-spacing:-0.4px;">
+            ${escapeHtml(prettyDate(d.from))} — ${escapeHtml(prettyDate(d.to))}
+          </h1>
+          <p style="margin:10px 0 0 0;color:#9CA3AF;font-size:14px;line-height:1.6;">
+            ${escapeHtml(String(d.txn_count || 0))} ${Number(d.txn_count) === 1 ? 'entry' : 'entries'} recorded${direction ? `. You spent ${escapeHtml(direction)}` : ''}.
+          </p>
+        </td></tr>
+
+        <tr><td style="padding:20px 22px 0 22px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+            ${figure('In', m(d.income), '#C8FF00')}
+            ${figure('Out', m(d.expense), '#FF5C6C')}
+            ${figure('Net', m(d.net), Number(d.net) >= 0 ? '#C8FF00' : '#FF5C6C')}
+          </tr></table>
+        </td></tr>
+
+        ${section('Where it went', categories)}
+        ${section('Due in the next 7 days', upcoming)}
+
+        ${
+          Number(d.overdue_count) > 0
+            ? `<tr><td style="padding:22px 28px 0 28px;">
+                 <div style="background:rgba(255,92,108,0.08);border:1px solid rgba(255,92,108,0.25);border-radius:14px;padding:13px 16px;color:#FF5C6C;font-size:13px;font-weight:600;">
+                   ${escapeHtml(String(d.overdue_count))} payment${Number(d.overdue_count) === 1 ? ' is' : 's are'} overdue.
+                 </div>
+               </td></tr>`
+            : ''
+        }
+
+        <tr><td style="padding:24px 28px 0 28px;">
+          <a href="${appUrl}/dashboard" style="display:inline-block;background:#C8FF00;color:#000000;text-decoration:none;font-size:14px;font-weight:700;padding:13px 24px;border-radius:999px;">
+            Open Novatrix
+          </a>
+        </td></tr>
+
+        <tr><td style="padding:26px 28px 28px 28px;">
+          <div style="height:1px;background:rgba(255,255,255,0.08);margin-bottom:16px;"></div>
+          <p style="margin:0;color:#6B7280;font-size:11.5px;line-height:1.6;">
+            You are getting this because the weekly digest is switched on for your Novatrix account.
+            <a href="${appUrl}/settings" style="color:#C8FF00;text-decoration:none;">Turn it off</a>.
+          </p>
+        </td></tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+}
+
+function renderDigestText(row, appUrl) {
+  const d = row.digest || {};
+  const cur = row.currency || 'INR';
+  const m = (v) => money(Number(v) || 0, cur);
+
+  const lines = [
+    `Your week — ${prettyDate(d.from)} to ${prettyDate(d.to)}`,
+    '',
+    `In:  ${m(d.income)}`,
+    `Out: ${m(d.expense)}`,
+    `Net: ${m(d.net)}`,
+    '',
+    `${d.txn_count || 0} entries recorded.`,
+  ];
+
+  if (d.top_categories?.length) {
+    lines.push('', 'Where it went:');
+    d.top_categories.forEach((c) => lines.push(`  ${c.name}: ${m(c.amount)}`));
+  }
+  if (d.upcoming?.length) {
+    lines.push('', 'Due in the next 7 days:');
+    d.upcoming.forEach((u) => lines.push(`  ${u.name}: ${m(u.amount)} on ${prettyDate(u.due_on)}`));
+  }
+  if (Number(d.overdue_count) > 0) {
+    lines.push('', `${d.overdue_count} payment(s) overdue.`);
+  }
+
+  lines.push('', `Open Novatrix: ${appUrl}/dashboard`);
+  return lines.join('\n');
+}
+
+async function runWeeklyDigest(env, options = {}) {
+  const missing = ['RESEND_API_KEY', 'SUPABASE_SERVICE_ROLE_KEY'].filter((k) => !env[k]);
+  if (missing.length) {
+    return { ok: false, error: `Missing secret(s): ${missing.join(', ')}` };
+  }
+
+  const appUrl = (env.APP_URL || 'https://finance.novatrixdigital.in').replace(/\/+$/, '');
+  const batch =
+    (await rpc(env, 'weekly_digest_batch', {
+      p_limit: Math.min(Math.max(Number(options.limit) || 200, 1), 500),
+    })) || [];
+
+  let sent = 0;
+  let failed = 0;
+  const errors = [];
+
+  for (const row of batch) {
+    // A dry run renders and counts but neither sends nor marks anyone done,
+    // so it can be repeated while testing the wiring.
+    if (options.dryRun) {
+      renderDigest(row, appUrl);
+      sent += 1;
+      continue;
+    }
+    try {
+      await sendViaResend(
+        env,
+        row.email,
+        'Your week with Novatrix',
+        renderDigest(row, appUrl),
+        renderDigestText(row, appUrl),
+      );
+      // Marked only after Resend accepts it. Marking first would drop the
+      // digest silently for a week whenever a send failed.
+      await rpc(env, 'mark_weekly_digest_sent', { p_user: row.user_id });
+      sent += 1;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      failed += 1;
+      if (errors.length < 5) errors.push(message.slice(0, 200));
+    }
+  }
+
+  return {
+    ok: true,
+    queued: batch.length,
+    sent,
+    failed,
+    dryRun: Boolean(options.dryRun),
+    ...(errors.length ? { errors } : {}),
+  };
+}
+
+/* ── Posting jobs ─────────────────────────────────────────────────────────── */
+
+/**
+ * Rolls forward everything that is due today: recurring rules and subscription
+ * renewals.
+ *
+ * These used to run only from the browser, on the first page load of the day.
+ * That made "auto-posted" mean "posted whenever somebody next signs in" — a
+ * fortnight away and the rent had not been booked, so every balance, budget and
+ * report was wrong until the app was opened. They belong on the cron, where
+ * nobody has to be watching.
+ */
+async function runPostingJobs(env) {
+  const out = {};
+  for (const fn of ['run_due_recurring', 'run_due_subscriptions']) {
+    try {
+      out[fn] = await rpc(env, fn);
+    } catch (err) {
+      out[fn] = { error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+  return out;
+}
+
+/** Everything the daily trigger does, in the order it has to happen. */
+async function runDailyJobs(env, options = {}) {
+  // Posting runs first: a renewal booked today is a reminder worth sending
+  // today, and the reminder generator reads what posting just wrote.
+  const posted = await runPostingJobs(env);
+  const reminders = await runReminders(env, options);
+
+  const out = { posted, reminders };
+
+  /*
+    Monday also carries the weekly digest, in the same invocation rather than
+    on a second cron. The digest reads the week that posting has just closed
+    out, and `weekly_digest_batch` skips anyone already sent today, so a retry
+    or an overlapping trigger cannot produce two copies.
+  */
+  const monday = new Date().getUTCDay() === 1;
+  if (options.digest === true || (options.digest !== false && monday)) {
+    out.digest = await runWeeklyDigest(env, options);
+  }
+
+  return out;
+}
+
 /* ── Handler ──────────────────────────────────────────────────────────────── */
 
 export default {
-  async fetch(request, env, ctx) {
+  async fetch(request, env, _ctx) {
     const url = new URL(request.url);
     const { pathname } = url;
 
@@ -298,8 +556,26 @@ export default {
       }
 
       try {
-        const result = await runReminders(env, options);
-        return json(result, result.ok ? 200 : 500);
+        /*
+          Three shapes, so each piece can be exercised on its own:
+            {}                 reminders only — the original behaviour
+            {"jobs": true}     the full daily pass, digest included on a Monday
+            {"digest": true}   the weekly digest on its own
+          `dryRun` applies to all three.
+        */
+        let result;
+        let ok;
+        if (options.jobs) {
+          result = await runDailyJobs(env, options);
+          ok = result.reminders?.ok !== false && result.digest?.ok !== false;
+        } else if (options.digest) {
+          result = await runWeeklyDigest(env, options);
+          ok = result.ok;
+        } else {
+          result = await runReminders(env, options);
+          ok = result.ok;
+        }
+        return json(result, ok ? 200 : 500);
       } catch (err) {
         return json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
       }
@@ -324,26 +600,39 @@ export default {
     const shell = await env.ASSETS.fetch(new URL('/index.html', url));
     if (!shell.ok) return shell;
 
-    return new Response(shell.body, {
-      status: 200,
-      headers: {
-        'Content-Type': 'text/html; charset=utf-8',
-        // The shell is route-agnostic and points at hashed assets, so it must
-        // be revalidated rather than replayed from cache after a deploy. No
-        // ETag is copied across: one shared by every route is exactly what let
-        // the conditional request go wrong.
-        'Cache-Control': 'no-cache, must-revalidate',
-        'X-Content-Type-Options': 'nosniff',
-      },
-    });
+    // Start from the asset response's own headers so everything dist/_headers
+    // applies — the generated CSP, HSTS, frame and referrer policy — survives
+    // the fallback. Building a bare header set here instead meant every
+    // deep-link refresh, which is the common case, was served unprotected
+    // while a cold load of the same URL was fine.
+    const headers = new Headers(shell.headers);
+    headers.set('Content-Type', 'text/html; charset=utf-8');
+    // The shell is route-agnostic and points at hashed assets, so it must be
+    // revalidated rather than replayed from cache after a deploy.
+    headers.set('Cache-Control', 'no-cache, must-revalidate');
+    headers.set('X-Content-Type-Options', 'nosniff');
+    // One ETag shared by every route is exactly what made the conditional
+    // request go wrong; drop it rather than hand it back.
+    headers.delete('ETag');
+    headers.delete('Last-Modified');
+
+    // Belt and braces: if the assets binding served no CSP (an older Wrangler,
+    // or a build whose postbuild step did not run), fall back to a policy that
+    // still blocks framing and inline object embeds.
+    if (!headers.has('Content-Security-Policy')) {
+      headers.set('X-Frame-Options', 'SAMEORIGIN');
+      headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+    }
+
+    return new Response(shell.body, { status: 200, headers });
   },
 
   /** Cron trigger — see [triggers] in wrangler.toml. */
   async scheduled(event, env, ctx) {
     ctx.waitUntil(
-      runReminders(env)
-        .then((r) => console.log('[reminders]', JSON.stringify(r)))
-        .catch((e) => console.error('[reminders] failed:', e?.message || e)),
+      runDailyJobs(env)
+        .then((r) => console.log('[cron]', JSON.stringify(r)))
+        .catch((e) => console.error('[cron] failed:', e?.message || e)),
     );
   },
 };

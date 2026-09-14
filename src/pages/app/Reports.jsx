@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Download, FileText, ArrowDownLeft, ArrowUpRight, Scale } from 'lucide-react';
+import { Download, FileText, ArrowDownLeft, ArrowUpRight, Scale, AlertTriangle, Printer } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card, CardHeader, Button, Select, EmptyState, LoadingBlock, Badge } from '@/components/ui';
 import { useCollection, useRpc } from '@/hooks/useCollection';
@@ -42,19 +42,31 @@ export default function Reports() {
 
   const range = useMemo(() => periodRange(period), [period]);
 
+  /* Both bounds are applied server-side. Bounding only the start and clipping
+     the tail in the browser meant a long period fetched rows it then threw
+     away — and, under a row cap, threw away the wrong ones. */
   const filters = useMemo(
     () => ({
-      txn_date: { op: 'gte', value: range.from },
+      txn_date: [
+        { op: 'gte', value: range.from },
+        { op: 'lte', value: range.to },
+      ],
       status: 'completed',
     }),
-    [range.from],
+    [range.from, range.to],
   );
 
-  const { rows, loading } = useCollection('transactions', {
+  /*
+    `all` rather than a limit. A statement that silently omits the oldest rows
+    of the period — which is what `limit: 1000` with a descending sort did —
+    reports a total that is simply wrong, and says nothing about it.
+  */
+  const { rows: inRange, loading, truncated } = useCollection('transactions', {
     select: 'id, description, amount, type, txn_date, workspace_id, category:categories(name, color), account:accounts!transactions_account_id_fkey(name)',
     orderBy: { column: 'txn_date', ascending: false },
     filters,
-    limit: 1000,
+    all: true,
+    pageSize: 1000,
   });
 
   const breakdownParams = useMemo(
@@ -62,12 +74,6 @@ export default function Reports() {
     [scope, range.from, range.to],
   );
   const breakdown = useRpc('expense_breakdown', breakdownParams);
-
-  /* Clip to the upper bound as well — the query only bounds the start. */
-  const inRange = useMemo(
-    () => rows.filter((t) => t.txn_date >= range.from && t.txn_date <= range.to),
-    [rows, range.from, range.to],
-  );
 
   const totals = useMemo(() => {
     const income = sumBy(inRange.filter((t) => t.type === 'income'), (t) => t.amount);
@@ -164,6 +170,9 @@ export default function Reports() {
                 </option>
               ))}
             </Select>
+            <Button variant="secondary" size="md" icon={Printer} onClick={() => window.print()}>
+              Print
+            </Button>
             <Button variant="secondary" size="md" icon={Download} onClick={exportSummary}>
               Summary
             </Button>
@@ -173,6 +182,20 @@ export default function Reports() {
           </>
         }
       />
+
+      {/* A statement that cannot show everything has to say so. */}
+      {truncated && (
+        <Card className="mb-6 border-warning/30 bg-warning/[0.06]">
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={17} className="mt-0.5 shrink-0 text-warning" />
+            <p className="text-[13px] leading-relaxed text-ink-dim">
+              This period holds more transactions than a single statement can load, so the figures
+              below cover only part of it.{' '}
+              <span className="text-ink">Narrow the period</span> for an accurate total.
+            </p>
+          </div>
+        </Card>
+      )}
 
       {/* Period banner */}
       <Card className="mb-6 border-accent/20 bg-lime/[0.03]">

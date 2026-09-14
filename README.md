@@ -78,24 +78,31 @@ Money always renders with `.tnum` (tabular numerals) so columns align.
 ├── vite.config.js              Aliases, manual chunks
 ├── tailwind.config.js          The design system
 ├── wrangler.toml               Cloudflare Workers + static assets config
+├── .github/workflows/ci.yml    Lint · tests · SQL · worker · build, on every push
 ├── scripts/                    check-env · gen-headers · push-secrets · check-sql
-├── worker/index.js             Optional edge worker (CSP, caching, /healthz)
+├── worker/index.js             Edge worker (SPA fallback, /healthz, daily cron)
 ├── public/
 │   ├── _redirects              SPA fallback
 │   ├── _headers                Base headers (regenerated into dist at build)
 │   └── logo.svg                Favicon / brand mark
 ├── supabase/
 │   ├── novatrix_complete.sql   THE WHOLE DATABASE — run this one file
-│   ├── migration_002_…sql      Cash system · one primary account · payments→ledger
-│   ├── migration_003_…sql      Shared accounts · subscription automation · reminders
-│   ├── create_account.sql      Optional: provision the owner account
+│   │                           Part 0  enum catch-up (no-op when new)
+│   │                           Part 1  schema, balance + invoice triggers
+│   │                           Part 2  row level security
+│   │                           Part 3  functions & RPCs
+│   │                           Part 4  storage buckets
+│   │                           Part 5  maintenance
+│   │                           Part 6  subscriptions, reminders, email
+│   │                           Part 7  cash, one primary account, ledger
+│   │                           Part 8  shared rows, automation, reminders
+│   │                           Part 9  weekly digest
 │   └── functions/
 │       └── send-reminders/     Edge Function — Resend email delivery
-│                               Parts 1-6: schema · RLS · functions ·
-│                               storage · demo seed · subscriptions
 └── src/
     ├── main.jsx  App.jsx  index.css
     ├── lib/         supabase · config · format · constants · icons · utils
+    │                format.test.js · utils.test.js (vitest)
     ├── context/     Auth · Workspace · Theme · Toast · Modal
     ├── hooks/       useCollection · useDashboard · useFormOptions · useNotifications
     ├── components/
@@ -128,41 +135,50 @@ cp .env.example .env
 
 1. Create a project at [supabase.com](https://supabase.com).
 2. Open **SQL Editor → New query**, paste the whole of **`supabase/novatrix_complete.sql`**,
-   and press **Run**. That single file builds everything — schema, RLS, functions, storage
-   buckets and the demo-seed routines — in the correct order.
+   and press **Run**.
 
-   It is idempotent (`CREATE TABLE IF NOT EXISTS`, `DROP POLICY IF EXISTS` before each
-   `CREATE POLICY`, `CREATE OR REPLACE FUNCTION`), so running it again is safe.
+   That is the entire database setup. There is no second file and no migration
+   order to get right — schema, RLS, functions, storage buckets, the cash
+   system, shared accounts, subscription automation, reminders and the weekly
+   digest are Parts 0 through 9 of that one script, in the order they have to
+   run. (It used to be four files applied in sequence, which left the database
+   half-built if one was skipped.)
+
+   It is idempotent throughout — `CREATE TABLE IF NOT EXISTS`, `DROP POLICY IF
+   EXISTS` before each `CREATE POLICY`, `CREATE OR REPLACE FUNCTION`,
+   `ADD COLUMN IF NOT EXISTS` — so running it again is safe, and running it on
+   a database that already holds real data is safe. Nothing in it deletes a
+   transaction, an invoice, a payment or an account, and no balance is
+   recomputed behind your back.
+
+   **One caveat.** Part 0 adds an enum label and must commit before the later
+   parts use it, so it sits outside any transaction on purpose. On a new
+   database it does nothing at all. If your SQL client wraps the whole script
+   in a single transaction and objects with *"unsafe use of new value of enum
+   type"*, run Part 0 on its own first and then the rest — the file is
+   idempotent, so nothing is harmed by that.
 
    Verify:
 
    ```sql
    select count(*) from information_schema.tables where table_schema = 'public';  -- 12
    select tablename, rowsecurity from pg_tables where schemaname = 'public';      -- all true
+
+   -- accounts may be shared (NULL workspace = both)   → Part 8
+   select is_nullable from information_schema.columns
+    where table_name = 'accounts' and column_name = 'workspace_id';               -- YES
+
+   -- exactly one primary account per user             → Part 7
+   select user_id, count(*) from public.accounts
+    where is_primary group by user_id having count(*) <> 1;                       -- 0 rows
+
+   -- the digest functions exist                       → Part 9
+   select count(*) from pg_proc
+    where proname in ('weekly_digest_for', 'weekly_digest_batch',
+                      'mark_weekly_digest_sent', 'my_weekly_digest');             -- 4
    ```
 
-2b. **Run the migrations, in order**, in the same SQL editor:
-
-    | File | What it changes |
-    | --- | --- |
-    | `migration_002_cash_and_fixes.sql` | Cash accounts, exactly one primary account, paid payments reach the ledger |
-    | `migration_003_shared_and_automation.sql` | Accounts/contacts usable in **both** workspaces, subscriptions mirror onto Recurring, reminders for payments · invoices · goals · budgets |
-
-    Both are idempotent and additive — no transaction, invoice, payment or balance
-    is rewritten. Migration 003 opens with a `§0` block that adds an enum label and
-    sits outside the transaction on purpose; if your client wraps the whole script in
-    one transaction and objects, run `§0` on its own first, then the rest.
-
-    Verify 003 landed:
-
-    ```sql
-    -- accounts may now be shared (NULL workspace = both)
-    select is_nullable from information_schema.columns
-     where table_name = 'accounts' and column_name = 'workspace_id';   -- YES
-
-    -- every non-lifetime subscription has exactly one mirror
-    select count(*) from public.recurring_transactions where subscription_id is not null;
-    ```
+   The script's own footer carries a fuller checklist.
 
 3. **Settings → API** → copy the Project URL and the `anon` / publishable key into `.env`:
 
@@ -254,6 +270,48 @@ instead of once per row.
 
 `owns_workspace()` is `SECURITY DEFINER` so referencing it from another table's policy does not
 re-enter the `workspaces` policy and recurse.
+
+### How much data a page loads
+
+A finance screen that silently drops rows reports a wrong number with total
+confidence, which is the worst failure this product has. Every list page states
+which of three modes it is in, and `useCollection` enforces it:
+
+| Mode | Behaviour | Used by |
+| --- | --- | --- |
+| `limit: n` | One bounded window, nothing more | Dashboard panels — "the latest 6" |
+| `pageSize: n` | First window, then `loadMore()`, with `hasMore` | Transactions ledger |
+| `all: true` | Every matching row, paged transparently, `truncated` if it hits the 50 000 cap | Reports, and the Transactions totals pass |
+
+Reports previously fetched `txn_date >= from` **ordered descending** with
+`limit: 1000`. Past a thousand transactions in a period it therefore kept the
+*newest* thousand, discarded the oldest, and summed what was left into the
+statement — no warning, no "showing 1000 of N". Transactions had the same shape
+at 400 rows, where "All time" meant "the newest 400". Both now page, and a
+period that exceeds the cap says so in the page rather than under-reporting.
+
+Two supporting details:
+
+- Paged reads add `id` as a second sort key. Without a unique tie-breaker, two
+  rows sharing a date can swap places between requests, which duplicates one
+  row across pages and loses another.
+- Export pulls the remaining pages before writing the file (`loadAll()`), so a
+  CSV covers the whole filtered set rather than whichever pages are on screen.
+
+### Currency
+
+There is **no exchange rate anywhere in this product.** Balances are summed as
+plain numbers — in `dashboard_summary`, on Accounts, everywhere — so the totals
+are only meaningful while one currency is in play. When more than one is, the
+Accounts page says so plainly instead of printing a confident wrong number.
+
+The Settings "Default currency" picker now actually drives formatting:
+`setMoneyDefaults()` is fed from the profile by `AuthContext`, and grouping
+follows the currency rather than the symbol alone (en-IN lakh-grouping applied
+to dollars gives `$10,00,000`, which is nobody's convention). It previously
+wrote `profiles.currency` and was read by nothing — every formatter took its
+default from a *build-time* env var, so the app was INR-only whatever the
+setting said.
 
 ### Integrity enforced in the database, not the client
 
@@ -391,6 +449,25 @@ live state of the books:
 
 A `dedupe_key` (`sub:<id>:<date>`) makes generation idempotent — run it hourly if you like, each
 event is queued exactly once.
+
+**Weekly digest** (Part 9 of the schema) is the Monday email: what you earned and
+spent last week against the week before, your five biggest expense categories,
+what falls due in the next seven days, and a count of anything overdue. It
+skips a week with no activity — an empty digest is spam that happens to be
+accurate — and `weekly_digest_sent_on` guards against a cron firing twice.
+
+The Settings toggle for it has existed since the beginning and wrote
+`profiles.weekly_digest`; nothing anywhere read the column. Turning it on gave
+a success toast and then silence, indistinguishable from the feature being off.
+Migration 004 and the Worker are the other half.
+
+**Receipts.** `transactions.attachment_url` and a private, uid-scoped
+`attachments` bucket have been in the schema since the first migration with
+nothing in the app writing to either. The transaction form now has the upload
+control that was missing, and the ledger shows a paperclip on rows that carry
+one. What is stored on the row is the storage **path**, not a signed URL:
+signed URLs expire, and a column full of week-old dead links is worse than an
+empty one, so the link is minted at the moment somebody clicks.
 
 ### Email delivery (Resend)
 
@@ -553,15 +630,59 @@ It also sets HSTS, `X-Content-Type-Options`, `frame-ancestors`, `object-src 'non
 immutable caching for `/assets/*`, and `no-cache` on `index.html` so a deploy never keeps serving
 stale asset links.
 
-### The optional Worker
+### The Worker
 
-`worker/index.js` does the same job in code — Supabase-scoped CSP, immutable caching, plus a
-`/healthz` endpoint. It is **not** wired up, because the static path above needs no code at all.
-To enable it, uncomment `main = "worker/index.js"` in `wrangler.toml` and add `binding = "ASSETS"`
-with `not_found_handling = "none"` under `[assets]`.
+`worker/index.js` sits in front of the static bundle and is **wired up** —
+`main = "worker/index.js"` in `wrangler.toml`, with `binding = "ASSETS"` and
+`not_found_handling = "none"` under `[assets]` so it sees unmatched paths and
+can route them itself. It does four things a static file cannot:
+
+| Route | Job |
+| --- | --- |
+| `GET /healthz` | Uptime probe; reports which secrets are *bound*, never their values |
+| `POST /api/reminders/run` | Manual trigger, behind `REMINDER_SECRET` |
+| `scheduled()` | The daily cron — see below |
+| `*` | SPA fallback so deep links do not 404 |
+
+**The SPA fallback carries the security headers.** It used to build a bare
+header set of its own, so the generated CSP, HSTS, frame and referrer policies
+from `dist/_headers` were dropped on every fallback response — which is to say
+on every deep-link *refresh*, the common case, while a cold load of the same
+URL was fine. It now starts from the asset response's own headers and
+overrides only content type, caching and `nosniff`, then drops the shared
+`ETag` (one ETag across every route is what caused the white-screen-on-refresh
+bug documented in the source).
 
 It lives in `worker/`, not `public/` — anything in `public/` is copied into `dist/` and would be
 served as a readable static file.
+
+### The daily cron
+
+`crons = ["0 1 * * *"]` — 01:00 UTC, 06:30 IST — runs, in order:
+
+1. `run_due_recurring()` — rent, payroll, posted to the ledger
+2. `run_due_subscriptions()` — renewals, posted to the ledger
+3. Reminder generation, then delivery through Resend
+4. On Mondays, the weekly digest
+
+Steps 1 and 2 previously ran **only in the browser**, on the first page load of
+the day. "Auto-posted" therefore meant "posted whenever somebody next signs
+in": leave the app shut for a fortnight and the rent was never booked, so every
+balance, budget and report was wrong until someone opened it. The browser still
+runs them on load as a harmless catch-up — both functions are idempotent — but
+nothing now depends on a human being logged in.
+
+To run the whole pass by hand:
+
+```bash
+curl -X POST https://finance.novatrixdigital.in/api/reminders/run \
+     -H "x-reminder-secret: $REMINDER_SECRET" \
+     -H "content-type: application/json" \
+     -d '{"jobs": true}'
+```
+
+`{"digest": true}` runs only the weekly digest; `{"dryRun": true}` renders and
+counts without sending or marking anything done, so it is safe to repeat.
 
 ### If the project is on Pages instead
 
@@ -596,51 +717,113 @@ Add `finance.novatrixdigital.in` under the project's **Settings → Domains**. I
 
 ## 9 · Responsive behaviour
 
-| Breakpoint | Layout |
-| --- | --- |
-| `< 640px` | Single column, bottom nav with a raised lime **+**, summary cards two-across, data tables collapse into one card per row, modals become bottom sheets |
-| `640 – 1024px` | Two-column Bento, sidebar becomes a drawer, tables return |
-| `1024 – 1536px` | Fixed sidebar, three-column summary grid |
-| `> 1536px` | Full experience — hero beside the right rail, six-column summary, three-column Bento |
+| Breakpoint | Navigation | Layout |
+| --- | --- | --- |
+| `< 768px` (phone) | Bottom bar with a raised lime **+**, plus a hamburger drawer | Single column, summary cards two-across, tables collapse into one card per row, modals become bottom sheets |
+| `768 – 1024px` (tablet) | **Persistent icon rail**, 4.75rem | Two-column Bento, tables return, one low-value column per table steps aside |
+| `1024 – 1536px` (laptop) | Full sidebar with labels, 17rem | Three-column summary grid, all table columns |
+| `> 1536px` (desktop) | Full sidebar | Hero beside the right rail, six-column summary, three-column Bento |
 
-**Nothing is hidden to make it fit.** Two rules carry that:
+**The tablet band used to be the weak one.** Persistent navigation started at
+1024px, so an iPad in portrait — 768 to 834px — got the phone layout: a
+hamburger over a bottom bar, on a screen with room to spare, and 7rem of
+bottom padding reserved for a bar that had nothing to clear. From 768px it is
+now an icon rail (`.nav-rail` in `index.css`), with the labels returning at
+1024px. The rail rules are scoped to that element rather than written as
+breakpoint utilities, because the phone drawer renders the same markup — a
+plain `hidden lg:inline` on a label would have blanked the drawer's labels too.
 
-- Wide tables (Transactions, Invoices, Payments, and the dashboard payments panel)
-  use `.table-stack`. Below 640px each row becomes a labelled card, so the amount,
-  the status and the row actions are on screen instead of parked off the right edge
-  where a horizontal scroll never reaches them.
-- Figures are fluid (`text-figure-fluid`) and are never truncated. The six-across
-  stat row used to clip a full rupee amount to its first few digits on a laptop;
-  it now shrinks the type and, failing that, wraps — it does not drop digits.
-  Six-across waits for `2xl`, where the cards are genuinely wide enough for it.
+**Nothing is hidden to make it fit.** Four rules carry that:
 
-The mobile "More" sheet carries the rest of the navigation plus the workspace and theme switches.
+- **Row actions are not hover-gated.** Edit and delete used to be
+  `opacity-0 group-hover:opacity-100`, which is a desktop flourish and a dead
+  end anywhere without a mouse: on a phone or tablet the buttons never
+  appeared, so those records could not be edited or deleted at all. They now
+  use `.reveal-actions`, which hides them until hover *only* under
+  `@media (hover: hover) and (pointer: fine)`.
+- Wide tables (Transactions, Invoices, Payments, and the dashboard payments
+  panel) use `.table-stack`. Below 640px each row becomes a labelled card, so
+  the amount, the status and the row actions are on screen instead of parked
+  off the right edge where a horizontal scroll never reaches them.
+- Through the tablet band, one column per wide table carries `.col-wide` and
+  steps aside (Account, Balance, Contact) so the rest fits without a sideways
+  scroll. Below 640px the stacked card shows every field anyway, so it returns.
+- Figures are fluid (`text-figure-fluid`) and are never truncated. The
+  six-across stat row used to clip a full rupee amount to its first few digits
+  on a laptop; it now shrinks the type and, failing that, wraps — it does not
+  drop digits. Six-across waits for `2xl`, where the cards are genuinely wide
+  enough for it.
+
+The phone "More" sheet carries the rest of the navigation plus the workspace and theme switches.
+
+**Touch.** The expense donut responds to a tap as well as a hover — with only
+`onMouseEnter` wired up, the whole ring was inert on a phone and the centre
+readout never left "Total Expenses".
+
+**Print.** `@media print` drops the sidebar, header, bottom bar and every
+control, and renders the page as ink on white in either theme. Reports has a
+**Print** button beside its exports.
 
 ---
 
-## 10 · Keyboard
+## 10 · Keyboard & accessibility
 
 | Shortcut | Action |
 | --- | --- |
+| `Tab` (first press) | **Skip to content** — jumps past the sixteen-item sidebar |
 | `Ctrl/⌘ + K` | Command palette — search transactions, invoices, contacts, accounts |
 | `↑ ↓` | Move through results |
+| `Tab` / `Shift + Tab` | Cycle controls **within** an open dialog; focus cannot leave it |
 | `Enter` | Open |
 | `Esc` | Close any modal or the palette |
 
+**Modals trap focus and give it back.** Tabbing past the last field used to
+walk straight out of the dialog and into the page behind it — still scrolled,
+still interactive, and to a screen-reader user indistinguishable from the
+dialog: the modal looked closed while the form was still open underneath.
+Closing now also returns focus to whatever opened it, rather than dropping it
+on `<body>` where the next `Tab` restarts from the top of the page.
+
+The expense donut's legend is a list of real buttons, each carrying the
+category, amount and share as its accessible name, and focusing one highlights
+its slice.
+
 ---
 
-## 11 · Verification status
+## 11 · Verification
 
-| Check | Result |
-| --- | --- |
-| `npm run build` | Passes — 2481 modules |
-| `npx eslint . --ext js,jsx` | Clean — 0 errors, 0 warnings |
-| Dev-server module probe | 57/57 modules transform cleanly |
-| Largest chunk | `charts` 422 kB (113 kB gzip), lazy-loaded |
+Run the whole gate with one command:
 
-The icon layer uses an explicit registry (`src/lib/icons.js`) rather than
-`import * as Icons from 'lucide-react'` — that alone cut the icon chunk from **780 kB to 49 kB**.
-Adding a new selectable icon means registering it there.
+```bash
+npm run verify     # lint · tests · SQL structure · worker routing
+npm run build      # and the bundle
+```
+
+| Check | Command | What it catches |
+| --- | --- | --- |
+| Lint | `npm run lint` | Unused vars and dead `eslint-disable` directives are **errors**, not warnings — `--max-warnings 0` means a warning was only ever a slower failure |
+| Unit tests | `npm run test` | 44 tests over `lib/format.js` and `lib/utils.js` — money rounding, Indian vs Western grouping, local-time dates, overdue arithmetic, CSV formula injection |
+| SQL structure | `npm run check:sql` | Unterminated dollar quotes and stray `$` across the schema file |
+| Worker routing | `npm run check:worker` | Deep-link refresh returns a body, a missing `.js` stays a 404, `/healthz` answers |
+| Build | `npm run build` | Compiles, then regenerates `dist/_headers` with a CSP scoped to this build's Supabase project |
+
+`.github/workflows/ci.yml` runs all of it on every push and pull request, and
+additionally greps the built `dist/_headers` for the CSP and HSTS lines — if
+the `postbuild` step ever stopped emitting them, every deployed page would
+quietly lose its headers.
+
+**Why tests exist now.** The suite covers the two things this product cannot
+afford to get wrong — money and dates — and every case in it is either a
+boundary the code reasons about explicitly or a bug that reached production.
+Writing them surfaced one live discrepancy: `formatCompact`'s doc comment
+claimed `2485000 → "₹24.9L"` when the code has always produced `₹25L`. The
+comment was wrong; the behaviour (one decimal below 10, none above) is
+deliberate and was left alone.
+
+**Bundle.** Largest chunk is `charts` at 422 kB (113 kB gzip), lazy-loaded. The
+icon layer uses an explicit registry (`src/lib/icons.js`) rather than
+`import * as Icons from 'lucide-react'` — that alone cut the icon chunk from
+**780 kB to 49 kB**. Adding a new selectable icon means registering it there.
 
 ---
 

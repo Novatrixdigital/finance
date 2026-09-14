@@ -17,7 +17,6 @@ export const isSupabaseConfigured = Boolean(
 );
 
 if (!isSupabaseConfigured && import.meta.env.DEV) {
-  // eslint-disable-next-line no-console
   console.warn(
     '[Novatrix] Supabase is not configured. Copy .env.example to .env and add\n' +
       'VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY, then restart the dev server.',
@@ -90,6 +89,21 @@ export async function uploadFile(bucket, userId, file, prefix = '') {
     .createSignedUrl(path, 60 * 60 * 24 * 7);
   if (signErr) throw signErr;
   return { path, url: data.signedUrl };
+}
+
+/**
+ * A fresh signed link for a private object.
+ *
+ * Private buckets can only be read through a signed URL, and those expire.
+ * Persisting the one `uploadFile` hands back would have worked for a week and
+ * then quietly turned every receipt link into a 400, so what gets stored on the
+ * row is the *path* and the link is minted when someone actually asks for it.
+ */
+export async function signedUrl(bucket, path, seconds = 60 * 10) {
+  if (!path) return null;
+  const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, seconds);
+  if (error) throw error;
+  return data.signedUrl;
 }
 
 export default supabase;

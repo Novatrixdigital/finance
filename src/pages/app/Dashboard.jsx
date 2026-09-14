@@ -114,8 +114,13 @@ export default function Dashboard() {
 
       {/* ── BENTO GRID ────────────────────────────────────────────────────── */}
       <div ref={insightsRef} className="scroll-mt-24 space-y-6">
-        {/* Row 1 — charts + recent activity */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-3">
+        {/*
+          Row 1 — charts + recent activity.
+
+          Two across from `md`, not `lg`: a tablet in portrait was stacking
+          these full width, so a 900px screen showed one card and a scroll.
+        */}
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
           <CashFlowChart data={chart} loading={loading} />
           <ExpenseDonut data={donut} loading={loading} period={period} onPeriodChange={setPeriod} />
           <RecentTransactions rows={transactions} loading={loading} />
@@ -132,7 +137,7 @@ export default function Dashboard() {
         </div>
 
         {/* Row 3 — goals + brand statement */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
           <GoalsPanel rows={goals} loading={loading} />
           <PromoCard />
         </div>

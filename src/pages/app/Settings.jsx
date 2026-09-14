@@ -179,7 +179,12 @@ export default function Settings() {
             <Input label="Email" value={profile?.email || user?.email || ''} disabled hint="Managed by your sign-in." />
             <Input label="Phone" value={form.phone} onChange={set('phone')} placeholder="+91 98400 11223" />
             <Input label="Company" value={form.company_name} onChange={set('company_name')} placeholder="Novatrix Digital" />
-            <Select label="Default currency" value={form.currency} onChange={set('currency')}>
+            <Select
+              label="Default currency"
+              value={form.currency}
+              onChange={set('currency')}
+              hint="Used for every figure in the app and for new accounts."
+            >
               {CURRENCIES.map((c) => (
                 <option key={c} value={c}>
                   {c}
@@ -375,7 +380,9 @@ export default function Settings() {
               <span className="text-[13px] leading-relaxed text-ink-dim">
                 Weekly summary
                 <span className="mt-0.5 block text-[11.5px] text-ink-muted">
-                  One Monday email with the week ahead.
+                  Monday morning: what you earned and spent last week, your five
+                  biggest expense categories, and what falls due in the next seven
+                  days. Skipped in a week with no activity.
                 </span>
               </span>
             </label>

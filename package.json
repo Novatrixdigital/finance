@@ -9,12 +9,15 @@
     "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "verify": "npm run lint && npm run test && npm run check:sql && npm run check:worker",
     "deploy": "npm run build && wrangler deploy",
     "check:env": "node scripts/check-env.mjs",
     "prebuild": "node scripts/check-env.mjs",
     "secrets:push": "node scripts/push-secrets.mjs",
     "functions:deploy": "supabase functions deploy send-reminders --no-verify-jwt",
-    "check:sql": "node scripts/check-sql.cjs supabase/novatrix_complete.sql && node scripts/check-sql.cjs supabase/migration_002_cash_and_fixes.sql && node scripts/check-sql.cjs supabase/migration_003_shared_and_automation.sql",
+    "check:sql": "node scripts/check-sql.cjs supabase/novatrix_complete.sql",
     "postbuild": "node scripts/gen-headers.mjs",
     "deploy:pages": "npm run build && wrangler pages deploy dist --project-name novatrix-digital",
     "cf:dev": "npm run build && wrangler dev",
@@ -43,6 +46,7 @@
     "postcss": "^8.4.49",
     "sharp": "^0.35.4",
     "tailwindcss": "^3.4.17",
-    "vite": "^5.4.11"
+    "vite": "^5.4.11",
+    "vitest": "^2.1.9"
   }
 }

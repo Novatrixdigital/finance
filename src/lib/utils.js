@@ -77,22 +77,36 @@ export function tintFor(text, palette) {
   return colors[hash % colors.length];
 }
 
-/** Rows → CSV download. Used by every export button in the app. */
-export function downloadCSV(filename, rows) {
-  if (!rows?.length) return;
+/**
+ * Rows → a CSV string.
+ *
+ * Split out from `downloadCSV` so the escaping — the part with security
+ * consequences — is testable without a DOM. Every cell is quoted, and a cell
+ * that opens with `=`, `+`, `-` or `@` gets an apostrophe in front so Excel and
+ * Sheets treat it as text: a description saved as
+ * `=HYPERLINK("http://evil","click")` is a formula the spreadsheet will run on
+ * whoever opens the export.
+ */
+export function toCSV(rows) {
+  if (!rows?.length) return '';
   const headers = Object.keys(rows[0]);
 
   const escape = (value) => {
     const s = value === null || value === undefined ? '' : String(value);
-    // Guard against spreadsheet formula injection on untrusted text.
     const safe = /^[=+\-@]/.test(s) ? `'${s}` : s;
     return `"${safe.replace(/"/g, '""')}"`;
   };
 
-  const csv = [
+  return [
     headers.join(','),
     ...rows.map((row) => headers.map((h) => escape(row[h])).join(',')),
   ].join('\r\n');
+}
+
+/** Rows → CSV download. Used by every export button in the app. */
+export function downloadCSV(filename, rows) {
+  if (!rows?.length) return;
+  const csv = toCSV(rows);
 
   // Lead with a UTF-8 BOM so Excel opens rupee symbols and names correctly.
   const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' });

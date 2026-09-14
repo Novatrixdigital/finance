@@ -269,18 +269,54 @@ export function Segmented({ options, value, onChange, className, size = 'md' }) 
    MODAL
    ══════════════════════════════════════════════════════════════════════════ */
 
+/** Everything inside a panel that a Tab press can reach. */
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 export function Modal({ open, onClose, title, subtitle, children, footer, size = 'md' }) {
   const panelRef = useRef(null);
+  /* What had focus before the dialog opened, so it can be given back. */
+  const restoreRef = useRef(null);
 
   const handleKey = useCallback(
     (e) => {
-      if (e.key === 'Escape') onClose?.();
+      if (e.key === 'Escape') {
+        onClose?.();
+        return;
+      }
+      if (e.key !== 'Tab' || !panelRef.current) return;
+
+      /*
+        Trap Tab inside the panel.
+
+        Without this, tabbing past the last field walked out of the dialog and
+        into the page behind it — which is still scrolled, still interactive
+        and, to a screen-reader user, indistinguishable from the dialog. The
+        modal looked closed while the form was still open underneath.
+      */
+      const items = [...panelRef.current.querySelectorAll(FOCUSABLE)].filter(
+        (el) => el.offsetParent !== null || el === document.activeElement,
+      );
+      if (!items.length) return;
+
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement;
+
+      if (e.shiftKey && (active === first || !panelRef.current.contains(active))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
     },
     [onClose],
   );
 
   useEffect(() => {
     if (!open) return undefined;
+    restoreRef.current = document.activeElement;
     document.addEventListener('keydown', handleKey);
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -296,6 +332,12 @@ export function Modal({ open, onClose, title, subtitle, children, footer, size =
       document.removeEventListener('keydown', handleKey);
       document.body.style.overflow = previousOverflow;
       clearTimeout(timer);
+      // Hand focus back to whatever opened the dialog; landing on <body>
+      // instead means the next Tab restarts from the top of the page.
+      const restore = restoreRef.current;
+      if (restore && typeof restore.focus === 'function' && document.contains(restore)) {
+        restore.focus();
+      }
     };
   }, [open, handleKey]);
 
